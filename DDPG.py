@@ -5,7 +5,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Implementation of Deep Deterministic Policy Gradients (DDPG)
 # Paper: https://arxiv.org/abs/1509.02971
@@ -45,12 +44,13 @@ class Critic(nn.Module):
 
 
 class DDPG(object):
-    def __init__(self, state_dim, action_dim, max_action, discount=0.99, tau=0.001):
-        self.actor = Actor(state_dim, action_dim, max_action).to(device)
+    def __init__(self, state_dim, action_dim, max_action, discount=0.99, tau=0.001, device='cpu'):
+        self.device = device
+        self.actor = Actor(state_dim, action_dim, max_action).to(self.device)
         self.actor_target = copy.deepcopy(self.actor)
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=1e-4)
 
-        self.critic = Critic(state_dim, action_dim).to(device)
+        self.critic = Critic(state_dim, action_dim).to(self.device)
         self.critic_target = copy.deepcopy(self.critic)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), weight_decay=1e-2)
 
@@ -59,7 +59,7 @@ class DDPG(object):
 
 
     def select_action(self, state):
-        state = torch.FloatTensor(state.reshape(1, -1)).to(device)
+        state = torch.FloatTensor(state.reshape(1, -1)).to(self.device)
         return self.actor(state).cpu().data.numpy().flatten()
 
 
