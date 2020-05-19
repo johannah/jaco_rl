@@ -7,6 +7,8 @@ import pickle
 import utils
 from replay_buffer import ReplayBuffer
 
+from skimage.color import rgb2gray
+from skimage.util import img_as_ubyte
 from dm_control import suite
 from dm_control import viewer
 from IPython import embed
@@ -29,18 +31,21 @@ if __name__ == "__main__":
     parser.add_argument("--task", default="easy")  					# DeepMind Control Suite task name
     parser.add_argument("--seed", default=0, type=int)              # Sets PyTorch and Numpy seeds
     parser.add_argument("--start_timesteps", default=1e4, type=int) # Time steps initial random policy is used
-    parser.add_argument("--replay_size", default=1e7, type=int) # Time steps initial random policy is used
-    parser.add_argument("--eval_freq", default=50000, type=int)       # How often (time steps) we evaluate
+    parser.add_argument("--replay_size", default=500000, type=int) # Time steps initial random policy is used
+    parser.add_argument("--eval_freq", default=5000, type=int)       # How often (time steps) we evaluate
     parser.add_argument("--max_timesteps", default=1e7, type=int)   # Max time steps to run environment
     parser.add_argument("--expl_noise", default=0.1)                # Std of Gaussian exploration noise
     parser.add_argument("--batch_size", default=256, type=int)      # Batch size for both actor and critic
     parser.add_argument("--discount", default=0.99)                 # Discount factor
+    parser.add_argument("--state_pixels", default=True, action='store_true', help='return pixels from cameras')                 # Discount factor
+    parser.add_argument("--convert_to_gray", default=True, action='store_true', help='grayscale images')                 # Discount factor
+    parser.add_argument("--frame_height", default=80)
+    parser.add_argument("--frame_width", default=80)
     #parser.add_argument("--time_limit", default=10)                 # Time in seconds allowed to complete mujoco task
     parser.add_argument("--tau", default=0.005)                     # Target network update rate
     parser.add_argument("--policy_noise", default=0.2)              # Noise added to target policy during critic update
     parser.add_argument("--noise_clip", default=0.5)                # Range to clip target policy noise
     parser.add_argument("--n_bins", default=40, type=int)       # Frequency of delayed policy updates
-    parser.add_argument("--visual", default=False, type=bool)       # Return frames into replay buffer
     parser.add_argument('-c', "--cuda", default=False, type=bool)   # use gpu rather than cpu for computation
     parser.add_argument("--load_model", default="")                 # Model load file name, "" doesn't load, "default" uses file_name
     parser.add_argument("--exp_name", default="test")                 # Model load file name, "" doesn't load, "default" uses file_name
@@ -72,10 +77,6 @@ if __name__ == "__main__":
 
     state_dim = env.observation_spec()['observations'].shape[0]
     action_dim = env.action_spec().shape[0]
-    if args.visual:
-        cam_dim = env.physics.render().shape
-    else:
-        cam_dim = None
     min_action = float(env.action_spec().minimum[0])
     max_action = float(env.action_spec().maximum[0])
     action_shape = env.action_spec().shape
@@ -118,6 +119,11 @@ if __name__ == "__main__":
         policy_file = file_name if args.load_model == "default" else args.load_model
         policy.load(policy_file)
 
+    if args.convert_to_gray:
+        cam_dim = [args.frame_height, args.frame_width, 1]
+    else:
+        cam_dim = [args.frame_height, args.frame_width, 3]
+
     replay_buffer = ReplayBuffer(state_dim, action_dim, max_size=int(args.replay_size), cam_dim=cam_dim)
 
     ## Evaluate untrained policy
@@ -150,10 +156,11 @@ if __name__ == "__main__":
             action = action*-1.0
         # Perform action
         step_type, reward, discount, next_state = env.step(action)
+        frame = env.physics.render(height=args.frame_height,width=args.frame_width,camera_id='view1')
+        if args.convert_to_gray:
+            frame = img_as_ubyte(rgb2gray(frame)[:,:,None])
         done = step_type.last()
         # Store data in replay buffer
-        if args.visual:
-            frame = env.physics.render()
         replay_buffer.add(state['observations'], action, next_state['observations'], reward, done, frame=frame)
 
         state = next_state
@@ -177,10 +184,39 @@ if __name__ == "__main__":
             episode_num += 1
             best_reward = 0
 
-        # save model
-        if ((t + 1) % args.eval_freq == 0) or (t == int(args.max_timesteps)-1):
+        if done:
+            print("-------------DONE", t)
+            # +1 to account for 0 indexing. +0 on ep_timesteps since it will increment +1 even if done=True
+            #print(f"Total T: {t+1} Episode Num: {episode_num+1} Episode T: {episode_timesteps} Reward: {episode_reward:.3f}")
+            print("Total T: {} Episode Num: {} Episode T: {} Reward: {}".format(t+1, episode_num+1, episode_timesteps, episode_reward))
+            print('finished train episode with last reward of {} best reward {}'.format(reward, best_reward))
+            print('end', t)
+            print('target', state['observations'][-7:-4])
+            print('finger', state['observations'][-4:-1])
+            print('dist', state['observations'][-1:])
+            print("---------------------------------------")
+
+            # Reset environment
+            state_type, reward, discount, state = env.reset()
+            done = False
+            episode_reward = 0
+            episode_timesteps = 0
+            episode_num += 1
+            best_reward = 0
+
+        # Evaluate episode
+        if (t + 1) % args.eval_freq == 0:
             step_file_name = "{}_{}_{:05d}_{:010d}".format(args.policy, args.domain, args.seed, t)
+            st = time.time()
+            print("---------------------------------------")
+            print("---------------------------------------")
             print("---------------------------------------")
             print("writing data files", step_file_name)
-            pickle.dump(replay_buffer, open(os.path.join(results_dir, "{}_buffer.pkl".format(step_file_name)), 'wb'))
-            policy.save(os.path.join(results_dir, "{}_model.pt".format(step_file_name)))
+            evaluations.append(eval_policy(policy, args.domain, args.task, args.seed))
+            pickle.dump(replay_buffer, open("./results/{}.pkl".format(step_file_name), 'wb'))
+            np.save("./results/{}".format(step_file_name), evaluations)
+            policy.save("./models/{}".format(step_file_name))
+            et = time.time()
+            print("finished writing files in {} secs".format(et-st))
+ 
+

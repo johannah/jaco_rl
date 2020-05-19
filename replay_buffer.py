@@ -3,7 +3,7 @@ import torch
 
 
 class ReplayBuffer(object):
-    def __init__(self, state_dim, action_dim, max_size=int(1e6), cam_dim=None):
+    def __init__(self, state_dim, action_dim, max_size=int(1e6), cam_dim=[0,0,0]):
         self.max_size = max_size
         self.ptr = 0
         self.size = 0
@@ -13,7 +13,7 @@ class ReplayBuffer(object):
         self.next_state = np.zeros((max_size, state_dim))
         self.reward = np.zeros((max_size, 1))
         self.not_done = np.zeros((max_size, 1))
-        if cam_dim is not None:
+        if cam_dim[0] > 0:
             self.frames = np.zeros((max_size, cam_dim[0], cam_dim[1], cam_dim[2]), dtype=np.uint8)
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -24,9 +24,8 @@ class ReplayBuffer(object):
         self.next_state[self.ptr] = next_state
         self.reward[self.ptr] = reward
         self.not_done[self.ptr] = 1. - done
-        if frame != None:
+        if frame is not None:
             self.frames[self.ptr] = frame
-
         self.ptr = (self.ptr + 1) % self.max_size
         self.size = min(self.size + 1, self.max_size)
 
@@ -40,6 +39,7 @@ class ReplayBuffer(object):
             self.not_done[ind],
             self.frames[ind]
         )
+
     def sample(self, batch_size):
         ind = np.random.randint(0, self.size, size=batch_size)
         return (
