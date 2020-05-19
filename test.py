@@ -6,6 +6,7 @@ import sys
 import pickle
 import utils
 from replay_buffer import ReplayBuffer
+import time
 
 from skimage.color import rgb2gray
 from skimage.util import img_as_ubyte
@@ -14,6 +15,31 @@ from dm_control import viewer
 from IPython import embed
 # Runs policy for X episodes and returns average reward
 # A fixed seed is used for the eval environment
+
+def eval_policy(policy, domain_name, task_name, seed, num_eval_episodes=1):
+    eval_env = suite.load(domain_name=domain_name, task_name=task_name, environment_kwargs=environment_kwargs)
+    total_reward = 0.
+    for _ in range(num_eval_episodes):
+        state_type, reward, discount, state = eval_env.reset()
+        done = False
+        best_reward = 0
+        while not done:
+            action = policy.select_action(state['observations'])
+           
+            step_type, reward, discount, state = eval_env.step(action)
+            done = step_type.last()
+            total_reward += reward
+            if reward > best_reward:
+                best_reward = reward
+
+        print('finished eval episode with last reward of {} best reward {}'.format(reward, best_reward))
+    avg_episode_reward = total_reward/num_eval_episodes
+    print("---------------------------------------")
+    print("Evaluation over {} episodes: {}".format(num_eval_episodes, avg_episode_reward))
+    print("---------------------------------------")
+    return avg_episode_reward
+
+
 
 def equal_quantization(n_bins, actions):
      integers = (((actions+1.0)/2.0)*n_bins).astype(np.int32)
@@ -33,7 +59,7 @@ if __name__ == "__main__":
     parser.add_argument("--start_timesteps", default=1e4, type=int) # Time steps initial random policy is used
     parser.add_argument("--replay_size", default=500000, type=int) # Time steps initial random policy is used
     parser.add_argument("--eval_freq", default=5000, type=int)       # How often (time steps) we evaluate
-    parser.add_argument("--max_timesteps", default=1e7, type=int)   # Max time steps to run environment
+    parser.add_argument("--max_timesteps", default=1e4, type=int)   # Max time steps to run environment
     parser.add_argument("--expl_noise", default=0.1)                # Std of Gaussian exploration noise
     parser.add_argument("--batch_size", default=256, type=int)      # Batch size for both actor and critic
     parser.add_argument("--discount", default=0.99)                 # Discount factor
@@ -48,11 +74,10 @@ if __name__ == "__main__":
     parser.add_argument("--n_bins", default=40, type=int)       # Frequency of delayed policy updates
     parser.add_argument('-c', "--cuda", default=False, type=bool)   # use gpu rather than cpu for computation
     parser.add_argument("--load_model", default="")                 # Model load file name, "" doesn't load, "default" uses file_name
-    parser.add_argument("--exp_name", default="test")                 # Model load file name, "" doesn't load, "default" uses file_name
+    parser.add_argument("--exp_name", default="test")               
+    parser.add_argument("--savedir", default="results", help='overall dir to store checkpoints')               
 
     args = parser.parse_args()
-    #environment_kwargs = {'flat_observation': False}
-    #environment_kwargs = {'flat_observation': True, "time_limit":args.time_limit}
     environment_kwargs = {'flat_observation': True}
     if args.cuda:
         device = 'cuda'
@@ -60,22 +85,25 @@ if __name__ == "__main__":
         device = 'cpu'
 
     num_steps = 0
-    file_name = "{}_{}_{:05d}".format(args.policy, args.domain, args.seed)
+    file_name = "{}_{}_{}_{:05d}".format(args.exp_name, args.policy, args.domain, args.seed)
     print("---------------------------------------")
     print("Policy: {} Domain: {}, Task: {}, Seed: {}".format(args.policy, args.domain, args.task, args.seed))
     print("---------------------------------------")
 
-    results_dir = os.path.join('results', args.exp_name)
-    if not os.path.exists(results_dir):
-        os.makedirs(results_dir)
-
     env = suite.load(domain_name=args.domain, task_name=args.task, environment_kwargs=environment_kwargs)
+    state_dim = env.observation_spec()['observations'].shape[0]
+    # although you can get state_dim from above if you flatten observations, I prefer to control by hand right now
+    # create an environment with flat_observation=True to see the data 
+    # for Jaco 7DOF states are
+    # 'position': angular position of joints (7 arm joints and 6 fingers) as 13 floats
+    # 'to_target': relative cartesian distance to the target from the finger
+    # 'velocity': velocity of the joints
+    # 'timestep' of experiment
 
     # Set seeds
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    state_dim = env.observation_spec()['observations'].shape[0]
     action_dim = env.action_spec().shape[0]
     min_action = float(env.action_spec().minimum[0])
     max_action = float(env.action_spec().maximum[0])
@@ -84,7 +112,6 @@ if __name__ == "__main__":
 
     random_state = np.random.RandomState(args.seed)
     action = random_state.uniform(low=min_action, high=max_action, size=action_shape)
-
     kwargs = {
         "state_dim": state_dim,
         "action_dim": action_dim,
@@ -118,6 +145,16 @@ if __name__ == "__main__":
     if args.load_model != "":
         policy_file = file_name if args.load_model == "default" else args.load_model
         policy.load(policy_file)
+        # store in old dir
+        results_dir = os.path.split(args.load_model)[0]
+    else:
+        cnt = 0
+        results_dir = os.path.join(args.savedir, args.exp_name+'%02d'%cnt)
+        while os.path.exists(results_dir):
+            cnt+=1
+            results_dir = os.path.join(args.savedir, args.exp_name+'%02d'%cnt)
+        os.makedirs(results_dir)
+    print('storing results in: {}'.format(results_dir))
 
     if args.convert_to_gray:
         cam_dim = [args.frame_height, args.frame_width, 1]
@@ -126,12 +163,9 @@ if __name__ == "__main__":
 
     replay_buffer = ReplayBuffer(state_dim, action_dim, max_size=int(args.replay_size), cam_dim=cam_dim)
 
-    ## Evaluate untrained policy
-    #evaluations = [eval_policy(policy, args.domain, args.task, args.seed)]
-    # position is relative position from starting point
+    evaluations = []
 
     state_type, reward, discount, state = env.reset()
-
     done = False
     frame = None
     episode_reward = 0
@@ -147,13 +181,14 @@ if __name__ == "__main__":
         if t < args.start_timesteps:
             action = random_state.uniform(low=min_action, high=max_action, size=action_shape)
         else:
-            action = policy.select_action(state['observations'])
-        #        #+ random_state.normal(0, max_action * args.expl_noise, size=action_dim)
-        #        #).clip(-max_action, max_action)
-
-        action = equal_quantization(args.n_bins, np.abs(action))
-        if random_state.rand() > .5:
-            action = action*-1.0
+            # Select action randomly or according to policy
+            if t < args.start_timesteps:
+                action = np.random.uniform(low=min_action, high=max_action, size=action_dim)
+            else:
+                action = (
+                    policy.select_action(state['observations'])
+                    + np.random.normal(0, max_action * args.expl_noise, size=action_dim)
+                ).clip(-max_action, max_action)
         # Perform action
         step_type, reward, discount, next_state = env.step(action)
         frame = env.physics.render(height=args.frame_height,width=args.frame_width,camera_id='view1')
@@ -161,8 +196,8 @@ if __name__ == "__main__":
             frame = img_as_ubyte(rgb2gray(frame)[:,:,None])
         done = step_type.last()
         # Store data in replay buffer
+        
         replay_buffer.add(state['observations'], action, next_state['observations'], reward, done, frame=frame)
-
         state = next_state
         episode_reward += reward
         # Train agent after collecting sufficient data
@@ -171,31 +206,9 @@ if __name__ == "__main__":
         if reward > best_reward:
             best_reward = reward
         if done:
-            # +1 to account for 0 indexing. +0 on ep_timesteps since it will increment +1 even if done=True
-            #print(f"Total T: {t+1} Episode Num: {episode_num+1} Episode T: {episode_timesteps} Reward: {episode_reward:.3f}")
             print("Total T: {} Episode Num: {} Episode T: {} Reward: {}".format(t+1, episode_num+1, episode_timesteps, episode_reward))
             print('finished train episode with last reward of {} best reward {}'.format(reward, best_reward))
             print("---------------------------------------")
-            # Reset environment
-            state_type, reward, discount, state = env.reset()
-            done = False
-            episode_reward = 0
-            episode_timesteps = 0
-            episode_num += 1
-            best_reward = 0
-
-        if done:
-            print("-------------DONE", t)
-            # +1 to account for 0 indexing. +0 on ep_timesteps since it will increment +1 even if done=True
-            #print(f"Total T: {t+1} Episode Num: {episode_num+1} Episode T: {episode_timesteps} Reward: {episode_reward:.3f}")
-            print("Total T: {} Episode Num: {} Episode T: {} Reward: {}".format(t+1, episode_num+1, episode_timesteps, episode_reward))
-            print('finished train episode with last reward of {} best reward {}'.format(reward, best_reward))
-            print('end', t)
-            print('target', state['observations'][-7:-4])
-            print('finger', state['observations'][-4:-1])
-            print('dist', state['observations'][-1:])
-            print("---------------------------------------")
-
             # Reset environment
             state_type, reward, discount, state = env.reset()
             done = False
@@ -206,16 +219,14 @@ if __name__ == "__main__":
 
         # Evaluate episode
         if (t + 1) % args.eval_freq == 0:
-            step_file_name = "{}_{}_{:05d}_{:010d}".format(args.policy, args.domain, args.seed, t)
+            step_file_name = "{}_{}_{}_{:05d}_{:010d}".format(args.exp_name, args.policy, args.domain, args.seed, t)
             st = time.time()
-            print("---------------------------------------")
-            print("---------------------------------------")
             print("---------------------------------------")
             print("writing data files", step_file_name)
             evaluations.append(eval_policy(policy, args.domain, args.task, args.seed))
-            pickle.dump(replay_buffer, open("./results/{}.pkl".format(step_file_name), 'wb'))
-            np.save("./results/{}".format(step_file_name), evaluations)
-            policy.save("./models/{}".format(step_file_name))
+            pickle.dump(replay_buffer, open(os.path.join(results_dir, step_file_name+'.pkl'), 'wb'))
+            np.save(os.path.join(results_dir, step_file_name), evaluations)
+            policy.save(os.path.join(results_dir, step_file_name+'.pt'))
             et = time.time()
             print("finished writing files in {} secs".format(et-st))
  
