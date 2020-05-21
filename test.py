@@ -191,7 +191,7 @@ if __name__ == "__main__":
                 ).clip(-max_action, max_action)
         # Perform action
         step_type, reward, discount, next_state = env.step(action)
-        frame = env.physics.render(height=args.frame_height,width=args.frame_width,camera_id='view1')
+        frame = env.physics.render(height=args.frame_height,width=args.frame_width,camera_id='topview')
         if args.convert_to_gray:
             frame = img_as_ubyte(rgb2gray(frame)[:,:,None])
         done = step_type.last()
