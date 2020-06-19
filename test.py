@@ -26,11 +26,12 @@ def eval_policy(policy, domain_name, task_name, seed, num_eval_episodes=1):
         while not done:
             action = policy.select_action(state['observations'])
            
-            step_type, reward, discount, state = eval_env.step(action)
+            step_type, reward, discount, next_state = eval_env.step(action)
             done = step_type.last()
             total_reward += reward
             if reward > best_reward:
                 best_reward = reward
+            state = next_state
 
         print('finished eval episode with last reward of {} best reward {}'.format(reward, best_reward))
     avg_episode_reward = total_reward/num_eval_episodes
@@ -54,6 +55,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--policy", default="random")                  # Policy name (TD3, DDPG or OurDDPG)
     parser.add_argument("--domain", default="jaco")       			# DeepMind Control Suite domain name
+    parser.add_argument("--xml", default="jaco_j2s7s300_position.xml")       		    
+    
     parser.add_argument("--task", default="easy")  					# DeepMind Control Suite task name
     parser.add_argument("--seed", default=0, type=int)              # Sets PyTorch and Numpy seeds
     parser.add_argument("--start_timesteps", default=1e4, type=int) # Time steps initial random policy is used
@@ -78,7 +81,7 @@ if __name__ == "__main__":
     parser.add_argument("--savedir", default="results", help='overall dir to store checkpoints')               
 
     args = parser.parse_args()
-    environment_kwargs = {'flat_observation': True}
+    environment_kwargs = {'flat_observation':True}
     if args.cuda:
         device = 'cuda'
     else:
@@ -92,7 +95,7 @@ if __name__ == "__main__":
 
     env = suite.load(domain_name=args.domain, task_name=args.task, environment_kwargs=environment_kwargs)
     state_dim = env.observation_spec()['observations'].shape[0]
-    # although you can get state_dim from above if you flatten observations, I prefer to control by hand right now
+    # although you: can get state_dim from above if you flatten observations, I prefer to control by hand right now
     # create an environment with flat_observation=True to see the data 
     # for Jaco 7DOF states are
     # 'position': angular position of joints (7 arm joints and 6 fingers) as 13 floats
@@ -222,11 +225,13 @@ if __name__ == "__main__":
             step_file_name = "{}_{}_{}_{:05d}_{:010d}".format(args.exp_name, args.policy, args.domain, args.seed, t)
             st = time.time()
             print("---------------------------------------")
+            step_file_path = os.path.join(results_dir, step_file_name)
             print("writing data files", step_file_name)
-            evaluations.append(eval_policy(policy, args.domain, args.task, args.seed))
-            pickle.dump(replay_buffer, open(os.path.join(results_dir, step_file_name+'.pkl'), 'wb'))
-            np.save(os.path.join(results_dir, step_file_name), evaluations)
-            policy.save(os.path.join(results_dir, step_file_name+'.pt'))
+            # getting stuck here
+            #evaluations.append(eval_policy(policy, args.domain, args.task, args.seed))
+            pickle.dump(replay_buffer, open(step_file_path+'.pkl', 'wb'))
+            #np.save(step_file_path, evaluations)
+            policy.save(step_file_path+'.pt')
             et = time.time()
             print("finished writing files in {} secs".format(et-st))
  
