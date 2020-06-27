@@ -2,21 +2,23 @@ import numpy as np
 from IPython import embed
 
 class ReplayBuffer(object):
-    def __init__(self, state_dim, action_dim, max_size=int(1e6), cam_dim=[0,0,0]):
+    def __init__(self, state_dim, action_dim, max_size=int(1e6), cam_dim=[0,0,0], seed=1939):
+        self.random_state = np.random.RandomState(seed)
         self.max_size = max_size
         self.ptr = 0
         self.size = 0
         self.states = {}; self.next_states = {}
         for state_key, state_details in state_dim.items():
             if len(state_details.shape) == 1:
-                shape =[self.max_size] + list(state_details.shape) + [1]
+                shape = [self.max_size] + list(state_details.shape) + [1]
             else:
                 shape = [self.max_size] + list(state_details.shape)
             self.states[state_key] = np.empty((shape), dtype=state_details.dtype)
             self.next_states[state_key] = np.empty((shape), dtype=state_details.dtype)
-        self.actions = np.zeros((max_size, action_dim))
-        self.rewards = np.zeros((max_size, 1))
-        self.not_done = np.zeros((max_size, 1))
+            self.state_dim += shape
+        self.actions = np.empty((max_size, action_dim), np.float32)
+        self.rewards = np.empty((max_size, 1), np.float32)
+        self.not_done = np.empty((max_size, 1), dtype=np.bool)
         if cam_dim[0] > 0:
             self.frames = np.zeros((max_size, cam_dim[0], cam_dim[1], cam_dim[2]), dtype=np.uint8)
 
@@ -49,14 +51,12 @@ class ReplayBuffer(object):
         print("calling num steps back", num_steps_back)
         assert num_steps_back>0
         if self.num_steps_available() < num_steps_back:
-            print("num steps available < num steps back",  self.num_steps_available(), num_steps_back)
             return self.get_last_steps(self.num_steps_available())
          # can wrap around or dont need to wrap around
-        print('making inds', num_steps_back-self.ptr, self.ptr)
         ind = np.arange(self.ptr-num_steps_back, self.ptr)
-        return self.get_sample(ind, return_frames)
+        return self.get_indexes(ind, return_frames)
 
-    def get_sample(self, batch_indexes, return_frames=False):
+    def get_indexes(self, batch_indexes, return_frames=False):
         _states = {}
         _next_states = {}
         for state_key in self.states.keys():
@@ -66,4 +66,13 @@ class ReplayBuffer(object):
             return _states, self.actions[batch_indexes], self.rewards[batch_indexes], _next_states, self.frames[batch_indexes]
         else:
             return _states, self.actions[batch_indexes], self.rewards[batch_indexes], _next_states
+    def sample(self, batch_size, return_frames=False):
+        indexes = self.random_state.randint(0,self.ptr,batch_size)
+        if not return_frames:
+            _states, actions, rewards, next_states = self.get_indexes(batch_size)
+        else:
+            raise NotImplemented
+        
+
+
 
