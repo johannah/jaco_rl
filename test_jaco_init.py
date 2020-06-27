@@ -7,19 +7,22 @@ import os
 from IPython import embed
 import six
 seed = 13
-savedir = 'results'
 exp_name = 'test_start'
+frame_height = 240
+frame_width = 320
+colors = 3
+
+for exp_name ['relative_reacher_easy', 'reacher_easy', 'reacher_medium']:
+savedir = 'results'
 results_dir = os.path.join(savedir, exp_name)
+
 if not os.path.exists(results_dir):
     os.makedirs(results_dir)
  
 random_state = np.random.RandomState(seed)
-env = suite.load(domain_name='jaco', task_name='reacher_easy', 
+env = suite.load(domain_name='jaco', task_name='relative_reacher_easy', 
                  environment_kwargs={'flat_observation':False})
 
-frame_height = 240
-frame_width = 320
-colors = 3
 cam_dim = [frame_height, frame_width, colors]
 action_dim = env.action_spec().shape[0]
 state_dim = env.observation_spec()
@@ -38,12 +41,9 @@ replay_buffer = ReplayBuffer(state_dim, action_dim, max_size=max_timesteps, cam_
 
 state_type, reward, discount, state = env.reset()
 t = 0
-init_pos = np.array([4.71,2.61,0,.5,6.28,3.7,3.14])
-action = init_pos
+action = [.15,0,-.1,0,0,0,0]
 while t < max_timesteps:
     #action = np.abs(random_policy())
-    action[3] += .01
-    action[0] += .1
     step_type, reward, discount, next_state = env.step(action)
     done = step_type.last()
     frame = env.physics.render(height=frame_height,width=frame_width,camera_id='topview')

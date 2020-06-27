@@ -102,10 +102,15 @@ class TD3(object):
 
 
     def train(self, replay_buffer, batch_size=100):
+        print('training TD3')
         self.total_it += 1
 
         # Sample replay buffer
         state, action, next_state, reward, not_done = replay_buffer.sample(batch_size)
+        state = torch.FloatTensor(state).to(self.device)
+        next_state = torch.FloatTensor(next_state).to(self.device)
+        reward = torch.FloatTensor(reward).to(self.device)
+        not_done = torch.LongTensor(not_done).to(self.device)
 
         with torch.no_grad():
             # Select action according to policy and add clipped noise
@@ -152,15 +157,17 @@ class TD3(object):
                 target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
 
-    def save(self, filename):
-        torch.save(self.critic.state_dict(), filename + "_critic")
-        torch.save(self.critic_optimizer.state_dict(), filename + "_critic_optimizer")
-        torch.save(self.actor.state_dict(), filename + "_actor")
-        torch.save(self.actor_optimizer.state_dict(), filename + "_actor_optimizer")
+    def save(self, filepath):
+        model_dict =  {'critic':self.critic.state_dict(), 
+                      'actor':self.actor.state_dict(), 
+                      'critic_optimizer':self.critic_optimizer.state_dict(), 
+                      'actor_optimizer':self.actor_optimizer.state_dict()}
+        torch.save(model_dict, filepath)
 
-
-    def load(self, filename):
-        self.critic.load_state_dict(torch.load(filename + "_critic"))
-        self.critic_optimizer.load_state_dict(torch.load(filename + "_critic_optimizer"))
-        self.actor.load_state_dict(torch.load(filename + "_actor"))
-        self.actor_optimizer.load_state_dict(torch.load(filename + "_actor_optimizer"))
+    def load(self, filepath):
+        print("TD3 loading {}".format(filepath))
+        model_dict = torch.load(filepath)
+        self.critic.load_state_dict(model_dict['critic'])
+        self.actor.load_state_dict(model_dict['actor'])
+        self.critic_optimzer.load_state_dict(model_dict['critic_optimizer'])
+        self.actor_optimizer.load_state_dict(model_dict['actor_optimizer'])

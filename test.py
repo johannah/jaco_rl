@@ -16,57 +16,27 @@ from IPython import embed
 # Runs policy for X episodes and returns average reward
 # A fixed seed is used for the eval environment
 
-def eval_policy(policy, domain_name, task_name, seed, num_eval_episodes=1):
-    eval_env = suite.load(domain_name=domain_name, task_name=task_name, environment_kwargs=environment_kwargs)
-    total_reward = 0.
-    for _ in range(num_eval_episodes):
-        state_type, reward, discount, state = eval_env.reset()
-        done = False
-        best_reward = 0
-        while not done:
-            action = policy.select_action(state['observations'])
-           
-            step_type, reward, discount, next_state = eval_env.step(action)
-            done = step_type.last()
-            total_reward += reward
-            if reward > best_reward:
-                best_reward = reward
-            state = next_state
-
-        print('finished eval episode with last reward of {} best reward {}'.format(reward, best_reward))
-    avg_episode_reward = total_reward/num_eval_episodes
-    print("---------------------------------------")
-    print("Evaluation over {} episodes: {}".format(num_eval_episodes, avg_episode_reward))
-    print("---------------------------------------")
-    return avg_episode_reward
-
-
-
 def equal_quantization(n_bins, actions):
      integers = (((actions+1.0)/2.0)*n_bins).astype(np.int32)
      return ((integers.astype(np.float32)/n_bins)*2)-1
 
-
-#def equal_quantization_undo(n_bins, d_actions):
-#    return ((d_actions.double()/n_bins)*2)-1
-
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--policy", default="random")                  # Policy name (TD3, DDPG or OurDDPG)
+    parser.add_argument("--policy", default="TD3")                  # Policy name (TD3, DDPG or OurDDPG)
     parser.add_argument("--domain", default="jaco")       			# DeepMind Control Suite domain name
     parser.add_argument("--xml", default="jaco_j2s7s300_position.xml")       		    
     
-    parser.add_argument("--task", default="easy")  					# DeepMind Control Suite task name
+    parser.add_argument("--task", default="relative_reacher_easy")  					# DeepMind Control Suite task name
     parser.add_argument("--seed", default=0, type=int)              # Sets PyTorch and Numpy seeds
     parser.add_argument("--start_timesteps", default=1e4, type=int) # Time steps initial random policy is used
-    parser.add_argument("--replay_size", default=500000, type=int) # Time steps initial random policy is used
-    parser.add_argument("--eval_freq", default=5000, type=int)       # How often (time steps) we evaluate
-    parser.add_argument("--max_timesteps", default=1e4, type=int)   # Max time steps to run environment
+    parser.add_argument("--replay_size", default=1000000, type=int) # Time steps initial random policy is used
+    parser.add_argument("--eval_freq", default=10000, type=int)       # How often (time steps) we evaluate
+    parser.add_argument("--max_timesteps", default=1e9, type=int)   # Max time steps to run environment
     parser.add_argument("--expl_noise", default=0.1)                # Std of Gaussian exploration noise
     parser.add_argument("--batch_size", default=256, type=int)      # Batch size for both actor and critic
     parser.add_argument("--discount", default=0.99)                 # Discount factor
-    parser.add_argument("--state_pixels", default=True, action='store_true', help='return pixels from cameras')                 # Discount factor
+    parser.add_argument("--state_pixels", default=False, action='store_true', help='return pixels from cameras')                 # Discount factor
     parser.add_argument("--convert_to_gray", default=True, action='store_true', help='grayscale images')                 # Discount factor
     parser.add_argument("--frame_height", default=80)
     parser.add_argument("--frame_width", default=80)
@@ -74,18 +44,15 @@ if __name__ == "__main__":
     parser.add_argument("--tau", default=0.005)                     # Target network update rate
     parser.add_argument("--policy_noise", default=0.2)              # Noise added to target policy during critic update
     parser.add_argument("--noise_clip", default=0.5)                # Range to clip target policy noise
-    parser.add_argument("--n_bins", default=40, type=int)       # Frequency of delayed policy updates
-    parser.add_argument('-c', "--cuda", default=False, type=bool)   # use gpu rather than cpu for computation
+    parser.add_argument("--policy_freq", default=2, type=int, help='freq of delayed policy updates')
+    parser.add_argument("--n_bins", default=40, type=int)   
+    parser.add_argument('-d', '--device', default='cpu')   # use gpu rather than cpu for computation
     parser.add_argument("--load_model", default="")                 # Model load file name, "" doesn't load, "default" uses file_name
     parser.add_argument("--exp_name", default="test")               
     parser.add_argument("--savedir", default="results", help='overall dir to store checkpoints')               
 
     args = parser.parse_args()
     environment_kwargs = {'flat_observation':True}
-    if args.cuda:
-        device = 'cuda'
-    else:
-        device = 'cpu'
 
     num_steps = 0
     file_name = "{}_{}_{}_{:05d}".format(args.exp_name, args.policy, args.domain, args.seed)
@@ -94,39 +61,42 @@ if __name__ == "__main__":
     print("---------------------------------------")
 
     env = suite.load(domain_name=args.domain, task_name=args.task, environment_kwargs=environment_kwargs)
-    state_dim = env.observation_spec()['observations'].shape[0]
-    # although you: can get state_dim from above if you flatten observations, I prefer to control by hand right now
-    # create an environment with flat_observation=True to see the data 
-    # for Jaco 7DOF states are
-    # 'position': angular position of joints (7 arm joints and 6 fingers) as 13 floats
-    # 'to_target': relative cartesian distance to the target from the finger
-    # 'velocity': velocity of the joints
-    # 'timestep' of experiment
 
     # Set seeds
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
+    if not args.state_pixels:
+        cam_dim = [0,0,0]
+    else:
+        if args.convert_to_gray:
+            cam_dim = [args.frame_height, args.frame_width, 1]
+        else:
+            cam_dim = [args.frame_height, args.frame_width, 3]
+
+    state_dim = env.observation_spec()['observations'].shape[0]
     action_dim = env.action_spec().shape[0]
+
+    replay_buffer = ReplayBuffer(state_dim, action_dim, max_size=int(args.replay_size), cam_dim=cam_dim, seed=args.seed)
+
+
     min_action = float(env.action_spec().minimum[0])
     max_action = float(env.action_spec().maximum[0])
     action_shape = env.action_spec().shape
-
-
     random_state = np.random.RandomState(args.seed)
     action = random_state.uniform(low=min_action, high=max_action, size=action_shape)
     kwargs = {
         "state_dim": state_dim,
         "action_dim": action_dim,
-        "min_action": min_action,
         "max_action": max_action,
         "discount": args.discount,
         "tau": args.tau,
-        "device":device,
+        "device":args.device,
     }
     # Initialize policy
     if args.policy == "TD3":
         import TD3
+        # TODO does td3 give pos/neg since we only give max_action
         # Target policy smoothing is scaled wrt the action scale
         kwargs["policy_noise"] = args.policy_noise * max_action
         kwargs["noise_clip"] = args.noise_clip * max_action
@@ -158,14 +128,6 @@ if __name__ == "__main__":
             results_dir = os.path.join(args.savedir, args.exp_name+'%02d'%cnt)
         os.makedirs(results_dir)
     print('storing results in: {}'.format(results_dir))
-
-    if args.convert_to_gray:
-        cam_dim = [args.frame_height, args.frame_width, 1]
-    else:
-        cam_dim = [args.frame_height, args.frame_width, 3]
-
-    replay_buffer = ReplayBuffer(state_dim, action_dim, max_size=int(args.replay_size), cam_dim=cam_dim)
-
     evaluations = []
 
     state_type, reward, discount, state = env.reset()
@@ -174,12 +136,10 @@ if __name__ == "__main__":
     episode_reward = 0
     episode_timesteps = 0
     episode_num = 0
-
     best_reward = 0
+
     for t in range(int(args.max_timesteps)):
-
         episode_timesteps += 1
-
         # Select action randomly or according to policy
         if t < args.start_timesteps:
             action = random_state.uniform(low=min_action, high=max_action, size=action_shape)
@@ -194,9 +154,10 @@ if __name__ == "__main__":
                 ).clip(-max_action, max_action)
         # Perform action
         step_type, reward, discount, next_state = env.step(action)
-        frame = env.physics.render(height=args.frame_height,width=args.frame_width,camera_id='topview')
-        if args.convert_to_gray:
-            frame = img_as_ubyte(rgb2gray(frame)[:,:,None])
+        if args.state_pixels:
+            frame = env.physics.render(height=args.frame_height,width=args.frame_width,camera_id='topview')
+            if args.convert_to_gray:
+                frame = img_as_ubyte(rgb2gray(frame)[:,:,None])
         done = step_type.last()
         # Store data in replay buffer
         
@@ -228,9 +189,7 @@ if __name__ == "__main__":
             step_file_path = os.path.join(results_dir, step_file_name)
             print("writing data files", step_file_name)
             # getting stuck here
-            #evaluations.append(eval_policy(policy, args.domain, args.task, args.seed))
             pickle.dump(replay_buffer, open(step_file_path+'.pkl', 'wb'))
-            #np.save(step_file_path, evaluations)
             policy.save(step_file_path+'.pt')
             et = time.time()
             print("finished writing files in {} secs".format(et-st))

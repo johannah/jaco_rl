@@ -7,18 +7,13 @@ class ReplayBuffer(object):
         self.max_size = max_size
         self.ptr = 0
         self.size = 0
-        self.states = {}; self.next_states = {}
-        for state_key, state_details in state_dim.items():
-            if len(state_details.shape) == 1:
-                shape = [self.max_size] + list(state_details.shape) + [1]
-            else:
-                shape = [self.max_size] + list(state_details.shape)
-            self.states[state_key] = np.empty((shape), dtype=state_details.dtype)
-            self.next_states[state_key] = np.empty((shape), dtype=state_details.dtype)
-            self.state_dim += shape
-        self.actions = np.empty((max_size, action_dim), np.float32)
-        self.rewards = np.empty((max_size, 1), np.float32)
-        self.not_done = np.empty((max_size, 1), dtype=np.bool)
+        self.states = np.zeros((self.max_size,state_dim), dtype=np.float32)
+        self.next_states = np.zeros((self.max_size,state_dim), dtype=np.float32)
+        self.actions = np.zeros((max_size, action_dim), np.float32)
+        self.rewards = np.zeros((max_size, 1), np.float32)
+        self.not_dones = np.zeros((max_size, 1), dtype=np.bool)
+        # always store next frames
+        self.frames_enabled = False
         if cam_dim[0] > 0:
             self.frames = np.zeros((max_size, cam_dim[0], cam_dim[1], cam_dim[2]), dtype=np.uint8)
 
@@ -30,49 +25,36 @@ class ReplayBuffer(object):
             return self.max_size
 
     def add(self, state, action, next_state, reward, done, frame=None):
-        for state_key in state.keys():
-            if len(state[state_key].shape) == 1:
-                self.states[state_key][self.ptr] = state[state_key][:,None]
-                self.next_states[state_key][self.ptr] = next_state[state_key][:,None]
-            else:
-                self.states[state_key][self.ptr] = state[state_key]
-                self.next_states[state_key][self.ptr] = next_state[state_key]
-
+        self.states[self.ptr] = state
+        self.next_states[self.ptr] = next_state
         self.actions[self.ptr] = action
         self.rewards[self.ptr] = reward
-        self.not_done[self.ptr] = 1. - done
+        self.not_dones[self.ptr] = 1. - done
 
-        if frame is not None:
+        if self.frames_enabled:
             self.frames[self.ptr] = frame
         self.ptr = (self.ptr + 1) % self.max_size
         self.size+=1
 
-    def get_last_steps(self, num_steps_back, return_frames=False):
+    def get_last_steps(self, num_steps_back):
         print("calling num steps back", num_steps_back)
         assert num_steps_back>0
         if self.num_steps_available() < num_steps_back:
             return self.get_last_steps(self.num_steps_available())
          # can wrap around or dont need to wrap around
-        ind = np.arange(self.ptr-num_steps_back, self.ptr)
-        return self.get_indexes(ind, return_frames)
+        indexes = np.arange(self.ptr-num_steps_back, self.ptr)
+        return self.get_indexes(indexes, return_frames)
 
     def get_indexes(self, batch_indexes, return_frames=False):
-        _states = {}
-        _next_states = {}
-        for state_key in self.states.keys():
-            _states[state_key] = self.states[state_key][batch_indexes]
-            _next_states[state_key] = self.next_states[state_key][batch_indexes]
         if return_frames:
-            return _states, self.actions[batch_indexes], self.rewards[batch_indexes], _next_states, self.frames[batch_indexes]
+            return self.states[batch_indexes], self.actions[batch_indexes], self.rewards[batch_indexes], self.next_states[batch_indexes], self.not_dones[batch_indexes], self.frames[batch_indexes]
         else:
-            return _states, self.actions[batch_indexes], self.rewards[batch_indexes], _next_states
+            return self.states[batch_indexes], self.actions[batch_indexes], self.rewards[batch_indexes], self.next_states[batch_indexes],self.not_dones[batch_indexes],
+
     def sample(self, batch_size, return_frames=False):
         indexes = self.random_state.randint(0,self.ptr,batch_size)
-        if not return_frames:
-            _states, actions, rewards, next_states = self.get_indexes(batch_size)
-        else:
-            raise NotImplemented
+        return self.get_indexes(indexes, return_frames)
         
-
+# TODO fix frame
 
 
