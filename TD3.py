@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
+from IPython import embed
 # Implementation of Twin Delayed Deep Deterministic Policy Gradients (TD3)
 # Paper: https://arxiv.org/abs/1802.09477
 
@@ -94,6 +94,7 @@ class TD3(object):
         self.policy_freq = policy_freq
 
         self.total_it = 0
+        self.loss_dict = {'actor':[], 'critic':[], 'critic_step':[], 'actor_step':[]}
 
 
     def select_action(self, state):
@@ -101,15 +102,14 @@ class TD3(object):
         return self.actor(state).cpu().data.numpy().flatten()
 
 
-    def train(self, replay_buffer, batch_size=100):
-        print('training TD3')
+    def train(self, step, replay_buffer, batch_size=100):
         self.total_it += 1
-
         # Sample replay buffer
-        state, action, next_state, reward, not_done = replay_buffer.sample(batch_size)
+        state, action, reward, next_state, not_done = replay_buffer.sample(batch_size)
         state = torch.FloatTensor(state).to(self.device)
-        next_state = torch.FloatTensor(next_state).to(self.device)
+        action = torch.FloatTensor(action).to(self.device)
         reward = torch.FloatTensor(reward).to(self.device)
+        next_state = torch.FloatTensor(next_state).to(self.device)
         not_done = torch.LongTensor(not_done).to(self.device)
 
         with torch.no_grad():
@@ -118,6 +118,7 @@ class TD3(object):
                 torch.randn_like(action) * self.policy_noise
             ).clamp(-self.noise_clip, self.noise_clip)
 
+            # TODO - maybe clamp bt known min/max actions
             next_action = (
                 self.actor_target(next_state) + noise
             ).clamp(-self.max_action, self.max_action)
@@ -132,6 +133,8 @@ class TD3(object):
 
         # Compute critic loss
         critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
+        self.loss_dict['critic'].append(critic_loss.item())
+        self.loss_dict['critic_step'].append(step)
 
         # Optimize the critic
         self.critic_optimizer.zero_grad()
@@ -139,11 +142,13 @@ class TD3(object):
         self.critic_optimizer.step()
 
         # Delayed policy updates
+        actor_loss = 0
         if self.total_it % self.policy_freq == 0:
 
             # Compute actor losse
             actor_loss = -self.critic.Q1(state, self.actor(state)).mean()
-
+            self.loss_dict['actor'].append(actor_loss.item())
+            self.loss_dict['actor_step'].append(step)
             # Optimize the actor
             self.actor_optimizer.zero_grad()
             actor_loss.backward()
@@ -161,7 +166,8 @@ class TD3(object):
         model_dict =  {'critic':self.critic.state_dict(), 
                       'actor':self.actor.state_dict(), 
                       'critic_optimizer':self.critic_optimizer.state_dict(), 
-                      'actor_optimizer':self.actor_optimizer.state_dict()}
+                      'actor_optimizer':self.actor_optimizer.state_dict(),
+                      'loss_dict':self.loss_dict}
         torch.save(model_dict, filepath)
 
     def load(self, filepath):
@@ -171,3 +177,4 @@ class TD3(object):
         self.actor.load_state_dict(model_dict['actor'])
         self.critic_optimzer.load_state_dict(model_dict['critic_optimizer'])
         self.actor_optimizer.load_state_dict(model_dict['actor_optimizer'])
+        self.loss_dict = model_dict['loss_dict']

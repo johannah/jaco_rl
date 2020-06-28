@@ -29,10 +29,10 @@ if __name__ == "__main__":
     
     parser.add_argument("--task", default="relative_reacher_easy")  					# DeepMind Control Suite task name
     parser.add_argument("--seed", default=0, type=int)              # Sets PyTorch and Numpy seeds
-    parser.add_argument("--start_timesteps", default=1e4, type=int) # Time steps initial random policy is used
+    parser.add_argument("--start_timesteps", default=25e3, type=int) # Time steps initial random policy is used
     parser.add_argument("--replay_size", default=1000000, type=int) # Time steps initial random policy is used
     parser.add_argument("--eval_freq", default=10000, type=int)       # How often (time steps) we evaluate
-    parser.add_argument("--max_timesteps", default=1e9, type=int)   # Max time steps to run environment
+    parser.add_argument("--max_timesteps", default=5e6, type=int)   # Max time steps to run environment
     parser.add_argument("--expl_noise", default=0.1)                # Std of Gaussian exploration noise
     parser.add_argument("--batch_size", default=256, type=int)      # Batch size for both actor and critic
     parser.add_argument("--discount", default=0.99)                 # Discount factor
@@ -137,6 +137,7 @@ if __name__ == "__main__":
     episode_timesteps = 0
     episode_num = 0
     best_reward = 0
+    episodic_rewards = []
 
     for t in range(int(args.max_timesteps)):
         episode_timesteps += 1
@@ -166,7 +167,7 @@ if __name__ == "__main__":
         episode_reward += reward
         # Train agent after collecting sufficient data
         if t >= args.start_timesteps:
-            policy.train(replay_buffer, args.batch_size)
+            policy.train(t, replay_buffer, args.batch_size)
         if reward > best_reward:
             best_reward = reward
         if done:
@@ -174,6 +175,7 @@ if __name__ == "__main__":
             print('finished train episode with last reward of {} best reward {}'.format(reward, best_reward))
             print("---------------------------------------")
             # Reset environment
+            episodic_rewards.append(episode_reward)
             state_type, reward, discount, state = env.reset()
             done = False
             episode_reward = 0
@@ -181,7 +183,6 @@ if __name__ == "__main__":
             episode_num += 1
             best_reward = 0
 
-        # Evaluate episode
         if (t + 1) % args.eval_freq == 0:
             step_file_name = "{}_{}_{}_{:05d}_{:010d}".format(args.exp_name, args.policy, args.domain, args.seed, t)
             st = time.time()
@@ -189,6 +190,7 @@ if __name__ == "__main__":
             step_file_path = os.path.join(results_dir, step_file_name)
             print("writing data files", step_file_name)
             # getting stuck here
+            np.save(step_file_path+'.np', episodic_rewards)
             pickle.dump(replay_buffer, open(step_file_path+'.pkl', 'wb'))
             policy.save(step_file_path+'.pt')
             et = time.time()
