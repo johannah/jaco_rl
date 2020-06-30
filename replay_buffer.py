@@ -1,4 +1,5 @@
 import numpy as np
+import time
 from IPython import embed
 
 class ReplayBuffer(object):
@@ -7,6 +8,11 @@ class ReplayBuffer(object):
         self.max_size = max_size
         self.ptr = 0
         self.size = 0
+        self.episode_count = 0
+        self.episodic_reward = 0
+        self.episode_start_steps = [0]
+        self.episode_start_times = [time.time()]
+        self.episode_rewards = []
         self.states = np.zeros((self.max_size,state_dim), dtype=np.float32)
         self.next_states = np.zeros((self.max_size,state_dim), dtype=np.float32)
         self.actions = np.zeros((max_size, action_dim), np.float32)
@@ -35,6 +41,20 @@ class ReplayBuffer(object):
             self.frames[self.ptr] = frame
         self.ptr = (self.ptr + 1) % self.max_size
         self.size+=1
+        self.episodic_reward += reward
+        # track episode rollovers
+        if done:
+            self.episode_count += 1
+            self.episode_start_steps.append(self.size)
+            self.episode_start_times.append(time.time())
+            self.episode_rewards.append(self.episodic_reward)
+            e_time = self.episode_start_times[-1]-self.episode_start_times[-2]
+            e_steps = self.episode_start_steps[-1]-self.episode_start_steps[-2]
+            print('EPISODE {} END: Ep R: {} Ep Time: {} Ep Steps:{} Total Steps: {}'.format(self.episode_count, 
+                                                                                            self.episodic_reward, 
+                                                                                            e_time, e_steps, self.size))
+            self.episodic_reward = 0
+   
 
     def get_last_steps(self, num_steps_back):
         print("calling num steps back", num_steps_back)
@@ -52,7 +72,7 @@ class ReplayBuffer(object):
             return self.states[batch_indexes], self.actions[batch_indexes], self.rewards[batch_indexes], self.next_states[batch_indexes],self.not_dones[batch_indexes],
 
     def sample(self, batch_size, return_frames=False):
-        indexes = self.random_state.randint(0,self.ptr,batch_size)
+        indexes = self.random_state.randint(0,self.num_steps_available(),batch_size)
         return self.get_indexes(indexes, return_frames)
         
 # TODO fix frame

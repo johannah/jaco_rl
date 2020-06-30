@@ -175,6 +175,6 @@ class TD3(object):
         model_dict = torch.load(filepath)
         self.critic.load_state_dict(model_dict['critic'])
         self.actor.load_state_dict(model_dict['actor'])
-        self.critic_optimzer.load_state_dict(model_dict['critic_optimizer'])
+        self.critic_optimizer.load_state_dict(model_dict['critic_optimizer'])
         self.actor_optimizer.load_state_dict(model_dict['actor_optimizer'])
         self.loss_dict = model_dict['loss_dict']
