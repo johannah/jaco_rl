@@ -1,9 +1,16 @@
 import numpy as np
 import time
+import zlib
+import collections
+from dm_control import suite
+from skvideo.io import vwrite
 from IPython import embed
 
+def compress_frame(frame):
+    return zlib.compress(frame.tostring())
+
 class ReplayBuffer(object):
-    def __init__(self, state_dim, action_dim, max_size=int(1e6), cam_dim=[0,0,0], seed=1939):
+    def __init__(self, state_dim, action_dim, max_size=int(1e6), cam_dim=[0], seed=1939, garbage_check_multiplier=1.0):
         self.random_state = np.random.RandomState(seed)
         self.max_size = max_size
         self.ptr = 0
@@ -19,18 +26,28 @@ class ReplayBuffer(object):
         self.rewards = np.zeros((max_size, 1), np.float32)
         self.not_dones = np.zeros((max_size, 1), dtype=np.bool)
         # always store next frames
-        self.frames_enabled = False
-        if cam_dim[0] > 0:
-            self.frames = np.zeros((max_size, cam_dim[0], cam_dim[1], cam_dim[2]), dtype=np.uint8)
+        self.cam_dim = cam_dim
+        self.frames = {}; self.next_frames = {}
 
+        if cam_dim[0] > 0:
+            self.frames_enabled = True
+        else:
+            self.frames_enabled = False
+            # make fake frame batch
+            self.fake_dim = list(cam_dim)
+            self.fake_dim.insert(0, 32)
+            self.fake_frames = np.zeros(self.fake_dim, np.uint8)
+             
     def num_steps_available(self):
-        # TODO - off by one? 
         if self.size < self.max_size:
             return self.ptr
         else:
             return self.max_size
 
-    def add(self, state, action, next_state, reward, done, frame=None):
+    def undo_frame_compression(self, z):
+        return np.frombuffer(zlib.decompress(z), dtype=np.uint8).reshape(self.cam_dim)
+
+    def add(self, state, action, reward, next_state, done, frame_compressed=None, next_frame_compressed=None):
         self.states[self.ptr] = state
         self.next_states[self.ptr] = next_state
         self.actions[self.ptr] = action
@@ -38,11 +55,11 @@ class ReplayBuffer(object):
         self.not_dones[self.ptr] = 1. - done
 
         if self.frames_enabled:
-            self.frames[self.ptr] = frame
-        self.ptr = (self.ptr + 1) % self.max_size
-        self.size+=1
-        self.episodic_reward += reward
+            self.frames[self.ptr] = frame_compressed
+            self.next_frames[self.ptr] = next_frame_compressed
+
         # track episode rollovers
+        self.episodic_reward += reward
         if done:
             self.episode_count += 1
             self.episode_start_steps.append(self.size)
@@ -54,27 +71,116 @@ class ReplayBuffer(object):
                                                                                             self.episodic_reward, 
                                                                                             e_time, e_steps, self.size))
             self.episodic_reward = 0
-   
 
+        self.ptr = (self.ptr + 1) % self.max_size
+        self.size+=1
+   
     def get_last_steps(self, num_steps_back):
-        print("calling num steps back", num_steps_back)
         assert num_steps_back>0
         if self.num_steps_available() < num_steps_back:
             return self.get_last_steps(self.num_steps_available())
          # can wrap around or dont need to wrap around
         indexes = np.arange(self.ptr-num_steps_back, self.ptr)
-        return self.get_indexes(indexes, return_frames)
+        return self.get_indexes(indexes)
 
-    def get_indexes(self, batch_indexes, return_frames=False):
-        if return_frames:
-            return self.states[batch_indexes], self.actions[batch_indexes], self.rewards[batch_indexes], self.next_states[batch_indexes], self.not_dones[batch_indexes], self.frames[batch_indexes]
+    def get_indexes(self, batch_indexes):
+        if self.frames_enabled:
+            _frames = np.array([self.undo_frame_compression(self.frames[x]) for x in batch_indexes])
+            _next_frames = np.array([self.undo_frame_compression(self.next_frames[x]) for x in batch_indexes])
+            return self.states[batch_indexes], self.actions[batch_indexes], self.rewards[batch_indexes], self.next_states[batch_indexes], self.not_dones[batch_indexes], _frames, _next_frames
         else:
-            return self.states[batch_indexes], self.actions[batch_indexes], self.rewards[batch_indexes], self.next_states[batch_indexes],self.not_dones[batch_indexes],
+            if self.fake_frames.shape[0] != len(batch_indexes):
+                self.fake_dim[0] = len(batch_indexes)
+                self.fake_frames = np.zeros(self.fake_dim, np.uint8)
+            return self.states[batch_indexes], self.actions[batch_indexes], self.rewards[batch_indexes], self.next_states[batch_indexes], self.not_dones[batch_indexes], self.fake_frames, self.fake_frames
 
-    def sample(self, batch_size, return_frames=False):
+    def sample(self, batch_size):
         indexes = self.random_state.randint(0,self.num_steps_available(),batch_size)
-        return self.get_indexes(indexes, return_frames)
+        return self.get_indexes(indexes)
         
+    def plot_frames(self, movie_fpath, num_steps=100):
+        st, ac, re, nst, nd, fr, nfr = self.get_last_steps(num_steps)
+        vwrite(movie_fpath, fr)
+
 # TODO fix frame
+def test_fake_replay():
+    # test replay
+    state_dim = 2 
+    action_dim = 2
+    max_size = int(1e6)
+    test_size = int(max_size*2)
+    cam_dim = [0,0,0]
+    # make basic state on, bc we will add index in
+    basic_state = random_state.rand(test_size+1).astype(np.float32)
+    basic_action = random_state.rand(test_size, action_dim).astype(np.float32)
+    replay = ReplayBuffer(state_dim, action_dim, max_size, cam_dim, seed=1939)
+    basic_rewards = []
+    basic_dones = []
+
+    def get_fake_r(step_num):
+        if not step_num%2:
+            return 0
+        else:
+            return 1
+
+    def get_fake_done(step_num):
+        if not step_num%5:
+            return 0
+        else:
+            return 1
+
+    for i in range(1, test_size):
+        st = np.hstack((basic_state[i-1], [i-1]))
+        nst = np.hstack((basic_state[i], [i]))
+        replay.add(st, basic_action[i], get_fake_r(i), nst, get_fake_done(i))
+        for _ in range(5):
+            ss, sa, sr, sns, snd = replay.sample(1)
+            sind = int(ss[0,1])
+            nsind = int(sns[0,1])
+            sval= ss[0,0]
+            nsval = sns[0,0]
+            assert sind + 1 == nsind
+            assert sval == basic_state[sind]
+            assert nsval == basic_state[nsind]
+            assert sr == get_fake_r(nsind)
+            assert not snd == get_fake_done(nsind)
+
+ 
+if __name__ == '__main__':
+    seed = 22
+    max_size = int(1e7)
+    test_size = int(max_size*2)
+ 
+    random_state = np.random.RandomState(seed)
+           
+    frame_width = 120
+    frame_height = 120
+    cam_dim = [frame_height, frame_width, 3]
+
+    env = suite.load(domain_name='reacher', task_name='easy', task_kwargs={'random':seed},
+                                                              environment_kwargs={'flat_observation':True})
+    state_dim = env.observation_spec()['observations'].shape[0]
+    action_dim = env.action_spec().shape[0]
+    replay = ReplayBuffer(state_dim, action_dim, max_size, cam_dim, seed=1939)
+    min_action = float(env.action_spec().minimum[0])
+    max_action = float(env.action_spec().maximum[0])
+    state_type, reward, discount, state = env.reset()
+    frame_compressed = replay.compress_frame(env.physics.render(height=frame_height,width=frame_width))
+    for i in range(test_size):
+        action = random_state.uniform(low=min_action, high=max_action, size=action_dim)
+        step_type, reward, discount, next_state = env.step(action)
+        done = step_type.last()
+        next_frame_compressed = replay.compress_frame(env.physics.render(height=frame_height,width=frame_width))
+        replay.add(state['observations'], action, reward, next_state['observations'], done, frame_compressed=frame_compressed, next_frame_compressed=next_frame_compressed)
+        if done:
+            state_type, reward, discount, state = env.reset()
+            frame = replay.compress_frame(env.physics.render(height=frame_height,width=frame_width))
+        else:
+            next_state = state
+            frame_compressed = next_frame_compressed
+        if i > 10:
+            replay.sample(4)
+
+
 
 

@@ -1,3 +1,7 @@
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
 import numpy as np
 import torch
 import argparse
@@ -5,7 +9,7 @@ import os
 import sys
 import pickle
 import utils
-from replay_buffer import ReplayBuffer
+from replay_buffer import ReplayBuffer, compress_frame
 import time
 from glob import glob
 
@@ -21,6 +25,155 @@ def equal_quantization(n_bins, actions):
      integers = (((actions+1.0)/2.0)*n_bins).astype(np.int32)
      return ((integers.astype(np.float32)/n_bins)*2)-1
 
+def get_next_frame(frame_env):
+    next_frame = None
+    if args.state_pixels:
+        next_frame = frame_env.physics.render(height=args.frame_height,width=args.frame_width,camera_id='topview')
+        if args.convert_to_gray:
+            next_frame = img_as_ubyte(rgb2gray(next_frame)[:,:,None])
+        next_frame = compress_frame(next_frame)
+    return next_frame
+
+def evaluate():
+    eval_seed = args.seed
+    eval_replay_buffer = ReplayBuffer(state_dim, action_dim, 
+                                 max_size=int(args.eval_replay_size), 
+                                 cam_dim=cam_dim, seed=eval_seed)
+ 
+    eval_env = suite.load(domain_name=args.domain, task_name=args.task, task_kwargs={'random':eval_seed},  environment_kwargs=environment_kwargs)
+
+    for e in range(args.num_eval_episodes):
+        done = False
+        num_steps = 0
+        state_type, reward, discount, state = eval_env.reset()
+        frame_compressed = get_next_frame(eval_env)
+        dir_path = load_model_path.replace('.pt', '_eval%02d'%e) 
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+        while done == False:
+            action = (
+                    policy.select_action(state['observations'])
+                    + np.random.normal(0, max_action * args.expl_noise, size=action_dim)
+                ).clip(-max_action, max_action)
+
+            # Perform action
+            #print(num_steps, 'test', action)
+            step_type, reward, discount, next_state = eval_env.step(action)
+            next_frame_compressed = get_next_frame(eval_env)
+            done = step_type.last()
+            # Store data in replay buffer
+            eval_replay_buffer.add(state['observations'], action, reward, 
+                              next_state['observations'], done, 
+                              frame_compressed=frame_compressed, 
+                              next_frame_compressed=next_frame_compressed)
+
+            f,ax = plt.subplots(1,2)
+            ax[0].imshow(eval_replay_buffer.undo_frame_compression(frame_compressed))
+            ax[1].imshow(eval_replay_buffer.undo_frame_compression(next_frame_compressed))
+            ax[1].set_title(str(reward))
+            img_path = os.path.join(dir_path, 'frame_%05d.png'%num_steps)
+            print('writing', img_path)
+            plt.savefig(img_path)
+            plt.close()
+
+            frame_compressed = next_frame_compressed
+            state = next_state
+            num_steps+=1
+        movie_path = load_model_path.replace('.pt', '_eval%02d.mp4'%e) 
+        eval_replay_buffer.plot_frames(movie_path, num_steps)
+    # write data files
+    print("---------------------------------------")
+    eval_step_file_path = load_model_path.replace('.pt', '.epkl') 
+    # getting stuck here
+    pickle.dump(eval_replay_buffer, open(eval_step_file_path, 'wb'))
+    # todo plot
+ 
+def load_replay_buffer(load_replay_path, load_model_path=''):
+    # load replay buffer
+
+    if load_replay_path == 'empty' or (load_replay_path == '' and load_model_path == '' ):
+        replay_buffer = ReplayBuffer(state_dim, action_dim, 
+                                     max_size=int(args.replay_size), 
+                                     cam_dim=cam_dim, seed=args.seed)
+    else:
+        if load_replay_path != '':
+            if os.path.isdir(load_replay_path):
+                print("searching for latest replay from dir: {}".format(load_replay_path))
+                # find last file
+                search_path = os.path.join(args.load_replay, '*.pkl')
+                replay_files = glob(search_path)
+                if not len(replay_files):
+                    raise ValueError('could not find replay files at {}'.format(search_path))
+                else:
+                    load_replay_path = sorted(replay_files)[-1]
+                    print('loading most recent replay from directory: {}'.format(load_replay_path))
+            else:
+                load_replay_path = load_replay_path
+        else:
+            load_replay_path = load_model_path.replace('.pt', '.pkl')
+        print("loading replay from: {}".format(load_replay_path))
+        replay_buffer = pickle.load(open(load_replay_path, 'rb'))
+    return replay_buffer
+
+def train():
+    random_state = np.random.RandomState(args.seed)
+    replay_buffer = load_replay_buffer(load_replay_path=args.load_replay, load_model_path=load_model_path)
+    start_t = replay_buffer.size
+    info = utils.create_new_info_dict(args, load_model_path, args.load_replay)
+    done = False
+    state_type, reward, discount, state = env.reset()
+    frame_compressed = get_next_frame(env)
+    for t in range(start_t, int(args.max_timesteps)):
+        # Select action randomly or according to policy
+        if t < args.start_timesteps:
+            action = random_state.uniform(low=min_action, high=max_action, size=action_shape)
+        else:
+            # Select action randomly or according to policy
+            action = (
+                    policy.select_action(state['observations'])
+                    + np.random.normal(0, max_action * args.expl_noise, size=action_dim)
+                ).clip(-max_action, max_action)
+        # Perform action
+        step_type, reward, discount, next_state = env.step(action)
+        next_frame_compressed = get_next_frame(env)
+        done = step_type.last()
+        # Store data in replay buffer
+        replay_buffer.add(state['observations'], action, reward, next_state['observations'], done, frame_compressed=frame_compressed, next_frame_compressed=next_frame_compressed)
+        # Train agent after collecting sufficient data
+        if t >= args.start_timesteps:
+            policy.train(t, replay_buffer, args.batch_size)
+        # prepare for next step
+        if not done:
+            state = next_state
+            frame_compressed = next_frame_compressed
+        else:
+            print("Total T: {} Episode Num: {} Reward: {}".format(t, replay_buffer.episode_count-1, replay_buffer.episode_rewards[-1]))
+            print("---------------------------------------")
+            # Reset environment
+            state_type, reward, discount, state = env.reset()
+            frame_compressed = get_next_frame(env)
+
+
+        # write data files so they can be used for eval
+        if (t + 1) % args.save_freq == 0:
+            step_file_name = "{}_{}_{}_{:05d}_{:010d}".format(args.exp_name, args.policy, args.domain, args.seed, t)
+            st = time.time()
+            info['save_start_times'].append(st)
+            print("---------------------------------------")
+            step_file_path = os.path.join(results_dir, step_file_name)
+            print("writing data files", step_file_name)
+            # getting stuck here
+            pickle.dump(replay_buffer, open(step_file_path+'.pkl', 'wb'))
+            policy.save(step_file_path+'.pt')
+            et = time.time()
+            info['save_end_times'].append(et)
+            utils.save_info_dict(info, step_file_path)
+            print("finished writing files in {} secs".format(et-st))
+ 
+
+
+
+ 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -29,16 +182,18 @@ if __name__ == "__main__":
     parser.add_argument("--task", default="relative_reacher_easy", help='Deepmind Control Suite task name')
     parser.add_argument("--seed", default=0, type=int, help='random seed')
     parser.add_argument("--start_timesteps", default=25e3, type=int, help='number of time steps initial random policy is used')
-    parser.add_argument("--replay_size", default=1000000, type=int, help='number of steps to store in replay buffer')
+    parser.add_argument("--replay_size", default=int(1e6), type=int, help='number of steps to store in replay buffer')
+    parser.add_argument("--eval_replay_size", default=int(500000), type=int, help='number of steps to store in replay buffer')
     parser.add_argument("--save_freq", default=10000, type=int, help='how often to save model and replay buffer')
+    parser.add_argument("-ne", "--num_eval_episodes", default=10, type=int, help='')
     parser.add_argument("--max_timesteps", default=1e7, type=int)   # Max time steps to run environment
     parser.add_argument("--expl_noise", default=0.1)                # Std of Gaussian exploration noise
     parser.add_argument("--batch_size", default=256, type=int)      # Batch size for both actor and critic
     parser.add_argument("--discount", default=0.99)                 # Discount factor
     parser.add_argument("--state_pixels", default=False, action='store_true', help='return pixels from cameras')                 # Discount factor
-    parser.add_argument("--convert_to_gray", default=True, action='store_true', help='grayscale images')                 # Discount factor
-    parser.add_argument("--frame_height", default=80)
-    parser.add_argument("--frame_width", default=80)
+    parser.add_argument('-g', "--convert_to_gray", default=False, action='store_true', help='grayscale images')                 # Discount factor
+    parser.add_argument("--frame_height", default=120)
+    parser.add_argument("--frame_width", default=120)
     #parser.add_argument("--time_limit", default=10)                 # Time in seconds allowed to complete mujoco task
     parser.add_argument("--tau", default=0.005)                     # Target network update rate
     parser.add_argument("--policy_noise", default=0.2)              # Noise added to target policy during critic update
@@ -47,6 +202,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_bins", default=40, type=int)   
 
 
+    parser.add_argument('-e', "--eval", default=False, action='store_true', help='evaluate')                 # Discount factor
 
     parser.add_argument('-d', '--device', default='cpu')   # use gpu rather than cpu for computation
     parser.add_argument("--load_model", default="")                 # Model load file name, "" doesn't load, "default" uses file_name
@@ -65,12 +221,11 @@ if __name__ == "__main__":
     print("Policy: {} Domain: {}, Task: {}, Seed: {}".format(args.policy, args.domain, args.task, args.seed))
     print("---------------------------------------")
 
-    env = suite.load(domain_name=args.domain, task_name=args.task, task_kwargs={'random_seed':args.seed},  environment_kwargs=environment_kwargs)
+    env = suite.load(domain_name=args.domain, task_name=args.task, task_kwargs={'random':args.seed},  environment_kwargs=environment_kwargs)
 
     # Set seeds
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
-
     if not args.state_pixels:
         cam_dim = [0,0,0]
     else:
@@ -86,8 +241,6 @@ if __name__ == "__main__":
     min_action = float(env.action_spec().minimum[0])
     max_action = float(env.action_spec().maximum[0])
     action_shape = env.action_spec().shape
-    random_state = np.random.RandomState(args.seed)
-    action = random_state.uniform(low=min_action, high=max_action, size=action_shape)
     kwargs = {
         "state_dim": state_dim,
         "action_dim": action_dim,
@@ -150,93 +303,23 @@ if __name__ == "__main__":
         else:
             print("resuming in new directory")
             print(results_dir)
-        try:
-            info = load_info_dict(load_model_path.replace('.pt', '.info'))
-        except:
-            print('---not able to load info path')
-            embed()
+        #try:
+        #    info = load_info_dict(load_model_path.replace('.pt', '.info'))
+        #except:
+        #    print('---not able to load info path')
+        #    embed()
 
     if not os.path.exists(results_dir):
         os.makedirs(results_dir)
         print('storing results in: {}'.format(results_dir))
 
 
-
-    # load replay buffer
-    load_replay_path = args.load_replay
-    if args.load_replay == 'empty' or (args.load_replay == '' and args.load_model == '' ):
-        replay_buffer = ReplayBuffer(state_dim, action_dim, 
-                                     max_size=int(args.replay_size), 
-                                     cam_dim=cam_dim, seed=args.seed)
+    if args.eval:
+        evaluate()
     else:
-        if args.load_replay != '':
-            if os.path.isdir(args.load_replay):
-                print("searching for latest replay from dir: {}".format(args.load_replay))
-                # find last file
-                search_path = os.path.join(args.load_replay, '*.pkl')
-                replay_files = glob(search_path)
-                if not len(replay_files):
-                    raise ValueError('could not find replay files at {}'.format(search_path))
-                else:
-                    load_replay_path = sorted(replay_files)[-1]
-                    print('loading most recent replay from directory: {}'.format(load_replay_path))
-            else:
-                load_replay_path = args.load_replay
-        else:
-            load_replay_path = load_model_path.replace('.pt', '.pkl')
-        print("loading replay from: {}".format(load_replay_path))
-        replay_buffer = pickle.load(open(load_replay_path, 'rb'))
+        train()
 
-    info = utils.create_new_info_dict(args, load_model_path, load_replay_path)
-    start_t = replay_buffer.size
-    done = False
-    frame = None
-    state_type, reward, discount, state = env.reset()
-    for t in range(start_t, int(args.max_timesteps)):
-        # Select action randomly or according to policy
-        if t < args.start_timesteps:
-            action = random_state.uniform(low=min_action, high=max_action, size=action_shape)
-        else:
-            # Select action randomly or according to policy
-            if t < args.start_timesteps:
-                action = np.random.uniform(low=min_action, high=max_action, size=action_dim)
-            else:
-                action = (
-                    policy.select_action(state['observations'])
-                    + np.random.normal(0, max_action * args.expl_noise, size=action_dim)
-                ).clip(-max_action, max_action)
-        # Perform action
-        step_type, reward, discount, next_state = env.step(action)
-        if args.state_pixels:
-            frame = env.physics.render(height=args.frame_height,width=args.frame_width,camera_id='topview')
-            if args.convert_to_gray:
-                frame = img_as_ubyte(rgb2gray(frame)[:,:,None])
-        done = step_type.last()
-        # Store data in replay buffer
-        replay_buffer.add(state['observations'], action, next_state['observations'], reward, done, frame=frame)
-        state = next_state
-        # Train agent after collecting sufficient data
-        if t >= args.start_timesteps:
-            policy.train(t, replay_buffer, args.batch_size)
-        if done:
-            print("Total T: {} Episode Num: {} Reward: {}".format(t, replay_buffer.episode_count-1, replay_buffer.episode_rewards[-1]))
-            print("---------------------------------------")
-            # Reset environment
-            state_type, reward, discount, state = env.reset()
-        # write data files so they can be used for eval
-        if (t + 1) % args.save_freq == 0:
-            step_file_name = "{}_{}_{}_{:05d}_{:010d}".format(args.exp_name, args.policy, args.domain, args.seed, t)
-            st = time.time()
-            info['save_start_times'].append(st)
-            print("---------------------------------------")
-            step_file_path = os.path.join(results_dir, step_file_name)
-            print("writing data files", step_file_name)
-            # getting stuck here
-            pickle.dump(replay_buffer, open(step_file_path+'.pkl', 'wb'))
-            policy.save(step_file_path+'.pt')
-            et = time.time()
-            info['save_end_times'].append(et)
-            utils.save_info_dict(info, step_file_path)
-            print("finished writing files in {} secs".format(et-st))
- 
+
+
+
 
