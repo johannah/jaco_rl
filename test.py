@@ -50,6 +50,7 @@ def evaluate():
         num_steps = 0
         state_type, reward, discount, state = eval_env.reset()
         frame_compressed = get_next_frame(eval_env)
+        # TODO off by one error in step count!? of replay_buffer
         while done == False:
             action = (
                     policy.select_action(state['observations'])
@@ -57,7 +58,6 @@ def evaluate():
                 ).clip(-max_action, max_action)
 
             # Perform action
-            #print(num_steps, 'test', action)
             step_type, reward, discount, next_state = eval_env.step(action)
             next_frame_compressed = get_next_frame(eval_env)
             done = step_type.last()
@@ -77,8 +77,8 @@ def evaluate():
     print("---------------------------------------")
     eval_step_file_path = load_model_path.replace('.pt', '.epkl') 
     # getting stuck here
+    eval_replay_buffer.shrink_to_last_step()
     pickle.dump(eval_replay_buffer, open(eval_step_file_path, 'wb'))
-    # todo plot
  
 def load_replay_buffer(load_replay_path, load_model_path=''):
     # load replay buffer

@@ -6,8 +6,6 @@ This repository implements [TD3](https://arxiv.org/abs/1802.09477) and
 [here](https://github.com/sahandrez/dm_control/tree/jaco_arm). 
 * The agent implementations are taken from the [Official TD3 repository](https://github.com/sfujim/TD3).
 
-## Usage
-
 
 ### Example training for reacher:
 ```
@@ -16,5 +14,5 @@ python test.py --domain reacher --task easy --policy TD3 --seed 100 --device 'cu
 
 ### Example plot and eval previous experiment
 ``
-python test.py --domain reacher --task easy --policy TD3 --seed 100 --load_model 'results/reacher_easy_00'  --eval --state_pixels
+python test.py --domain reacher --task easy --policy TD3 --seed 101 --load_model 'results/reacher_easy_00'  --eval --state_pixels
 ```

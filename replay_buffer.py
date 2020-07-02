@@ -42,6 +42,15 @@ class ReplayBuffer(object):
             self.fake_dim.insert(0, 32)
             self.fake_frames = np.zeros(self.fake_dim, np.uint8)
              
+    def shrink_to_last_step(self):
+        """ shrink size of replay to exactly fit data. useful when saving evaluation buffers"""
+        self.states[:self.size]
+        self.next_states[:self.size]
+        self.actions[:self.size]
+        self.rewards[:self.size]
+        self.not_dones[:self.size]
+        self.max_size = self.size
+
     def num_steps_available(self):
         if self.size < self.max_size:
             return self.ptr
