@@ -7,7 +7,14 @@ This repository implements [TD3](https://arxiv.org/abs/1802.09477) and
 * The agent implementations are taken from the [Official TD3 repository](https://github.com/sfujim/TD3).
 
 ## Usage
-You can train an agent for the reaching task on Jaco arm by running:
+
+
+### Example training for reacher:
 ```
-python main.py --domain jaco --task easy
+python test.py --domain reacher --task easy --policy TD3 --seed 100 --device 'cuda:0' --exp_name 'reacher_easy'
+```
+
+### Example plot and eval previous experiment
+``
+python test.py --domain reacher --task easy --policy TD3 --seed 100 --load_model 'results/reacher_easy_00'  --eval --state_pixels
 ```

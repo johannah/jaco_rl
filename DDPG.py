@@ -45,6 +45,7 @@ class Critic(nn.Module):
 
 class DDPG(object):
     def __init__(self, state_dim, action_dim, max_action, discount=0.99, tau=0.001, device='cpu'):
+        self.total_it = 0
         self.device = device
         self.actor = Actor(state_dim, action_dim, max_action).to(self.device)
         self.actor_target = copy.deepcopy(self.actor)
@@ -54,6 +55,7 @@ class DDPG(object):
         self.critic_target = copy.deepcopy(self.critic)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), weight_decay=1e-2)
 
+        self.loss_dict = {'actor':[], 'critic':[], 'step':[]}
         self.discount = discount
         self.tau = tau
 
@@ -63,9 +65,17 @@ class DDPG(object):
         return self.actor(state).cpu().data.numpy().flatten()
 
 
-    def train(self, replay_buffer, batch_size=64):
+    def train(self, step, replay_buffer, batch_size=64):
+        self.total_it+=1
         # Sample replay buffer
-        state, action, next_state, reward, not_done = replay_buffer.sample(batch_size)
+        state, action, reward, next_state, not_done, _, _ = replay_buffer.sample(batch_size)
+        state = torch.FloatTensor(state).to(self.device)
+        action = torch.FloatTensor(action).to(self.device)
+        reward = torch.FloatTensor(reward).to(self.device)
+        next_state = torch.FloatTensor(next_state).to(self.device)
+        not_done = torch.LongTensor(not_done).to(self.device)
+
+
 
         # Compute the target Q value
         target_Q = self.critic_target(next_state, self.actor_target(next_state))
@@ -82,9 +92,11 @@ class DDPG(object):
         critic_loss.backward()
         self.critic_optimizer.step()
 
+        self.loss_dict['critic'].append(critic_loss.item())
         # Compute actor loss
         actor_loss = -self.critic(state, self.actor(state)).mean()
-
+        self.loss_dict['actor'].append(actor_loss.item())
+        self.loss_dict['step'].append(step)
         # Optimize the actor
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
@@ -98,16 +110,21 @@ class DDPG(object):
             target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
 
-    def save(self, filename):
-        torch.save(self.critic.state_dict(), filename + "_critic")
-        torch.save(self.critic_optimizer.state_dict(), filename + "_critic_optimizer")
-        torch.save(self.actor.state_dict(), filename + "_actor")
-        torch.save(self.actor_optimizer.state_dict(), filename + "_actor_optimizer")
+    def save(self, filepath):
+        model_dict =  {'critic':self.critic.state_dict(), 
+                      'actor':self.actor.state_dict(), 
+                      'critic_optimizer':self.critic_optimizer.state_dict(), 
+                      'actor_optimizer':self.actor_optimizer.state_dict(),
+                      'loss_dict':self.loss_dict, 
+                      'total_it':self.total_it}
+        torch.save(model_dict, filepath)
 
-
-    def load(self, filename):
-        self.critic.load_state_dict(torch.load(filename + "_critic"))
-        self.critic_optimizer.load_state_dict(torch.load(filename + "_critic_optimizer"))
-        self.actor.load_state_dict(torch.load(filename + "_actor"))
-        self.actor_optimizer.load_state_dict(torch.load(filename + "_actor_optimizer"))
-
+    def load(self, filepath):
+        print("DDPG loading {}".format(filepath))
+        model_dict = torch.load(filepath)
+        self.critic.load_state_dict(model_dict['critic'])
+        self.actor.load_state_dict(model_dict['actor'])
+        self.critic_optimizer.load_state_dict(model_dict['critic_optimizer'])
+        self.actor_optimizer.load_state_dict(model_dict['actor_optimizer'])
+        self.total_it = model_dict['total_it']
+        self.loss_dict = model_dict['loss_dict']

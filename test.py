@@ -28,7 +28,10 @@ def equal_quantization(n_bins, actions):
 def get_next_frame(frame_env):
     next_frame = None
     if args.state_pixels:
-        next_frame = frame_env.physics.render(height=args.frame_height,width=args.frame_width,camera_id='topview')
+        if args.camera_view == '':
+            next_frame = frame_env.physics.render(height=args.frame_height,width=args.frame_width)
+        else:
+            next_frame = frame_env.physics.render(height=args.frame_height,width=args.frame_width,camera_id=args.camera_view)
         if args.convert_to_gray:
             next_frame = img_as_ubyte(rgb2gray(next_frame)[:,:,None])
         next_frame = compress_frame(next_frame)
@@ -68,7 +71,8 @@ def evaluate():
             state = next_state
             num_steps+=1
         movie_path = load_model_path.replace('.pt', '_eval%02d.mp4'%e) 
-        eval_replay_buffer.plot_frames(movie_path, num_steps, plot_pngs=not e)
+        #eval_replay_buffer.plot_frames(movie_path, num_steps, plot_pngs=not e)
+        eval_replay_buffer.plot_frames(movie_path, num_steps)
     # write data files
     print("---------------------------------------")
     eval_step_file_path = load_model_path.replace('.pt', '.epkl') 
@@ -143,7 +147,7 @@ def train():
 
 
         # write data files so they can be used for eval
-        if (t + 1) % args.save_freq == 0:
+        if t % args.save_freq == 0:
             step_file_name = "{}_{}_{}_{:05d}_{:010d}".format(args.exp_name, args.policy, args.domain, args.seed, t)
             st = time.time()
             info['save_start_times'].append(st)
@@ -165,7 +169,7 @@ def train():
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--policy", default="bootstrapTD3", help='Policy name (TD3, DDPG or OurDDPG)')
+    parser.add_argument("--policy", default="TD3", help='Policy name (TD3, DDPG or OurDDPG)')
     parser.add_argument("--domain", default="jaco", help='DeepMind Control Suite domain name')
     parser.add_argument("--task", default="relative_reacher_easy", help='Deepmind Control Suite task name')
     parser.add_argument("--seed", default=0, type=int, help='random seed')
@@ -192,6 +196,7 @@ if __name__ == "__main__":
 
     parser.add_argument('-e', "--eval", default=False, action='store_true', help='evaluate')                 # Discount factor
 
+    parser.add_argument('-cv', '--camera_view', default='', help='camera view to use') 
     parser.add_argument('-d', '--device', default='cpu')   # use gpu rather than cpu for computation
     parser.add_argument("--load_model", default="")                 # Model load file name, "" doesn't load, "default" uses file_name
     parser.add_argument("--load_replay", default="", help='Indicate replay buffer to load past experience from. Options are ["", "empty", file path of replay buffer.pkl]. If empty string, a new replay buffer will be created unless --load_model was invoked, in that case, the respective replay buffer will be loaded. If set to "empty", an new buffer will be created regardless of if --load_model was invoked.')
@@ -238,16 +243,7 @@ if __name__ == "__main__":
         "device":args.device,
     }
     # Initialize policy
-    if args.policy == "bootstrapTD3":
-        import bootstrapTD3
-        # TODO does td3 give pos/neg since we only give max_action
-        # Target policy smoothing is scaled wrt the action scale
-        kwargs["policy_noise"] = args.policy_noise * max_action
-        kwargs["noise_clip"] = args.noise_clip * max_action
-        kwargs["policy_freq"] = args.policy_freq
-        policy = bootstrapTD3.TD3(**kwargs)
- 
-    elif args.policy == "TD3":
+    if args.policy == "TD3":
         import TD3
         # TODO does td3 give pos/neg since we only give max_action
         # Target policy smoothing is scaled wrt the action scale

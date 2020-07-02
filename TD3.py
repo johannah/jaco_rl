@@ -167,7 +167,8 @@ class TD3(object):
                       'actor':self.actor.state_dict(), 
                       'critic_optimizer':self.critic_optimizer.state_dict(), 
                       'actor_optimizer':self.actor_optimizer.state_dict(),
-                      'loss_dict':self.loss_dict}
+                      'loss_dict':self.loss_dict, 
+                      'total_it':self.total_it}
         torch.save(model_dict, filepath)
 
     def load(self, filepath):
@@ -178,3 +179,4 @@ class TD3(object):
         self.critic_optimizer.load_state_dict(model_dict['critic_optimizer'])
         self.actor_optimizer.load_state_dict(model_dict['actor_optimizer'])
         self.loss_dict = model_dict['loss_dict']
+        self.total_it = model_dict['total_it']
