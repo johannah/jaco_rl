@@ -163,6 +163,75 @@ def train():
             print("finished writing files in {} secs".format(et-st))
  
 
+def load_policy():
+    # Initialize policy
+    if args.policy == "TD3":
+        import TD3
+        # TODO does td3 give pos/neg since we only give max_action
+        # Target policy smoothing is scaled wrt the action scale
+        kwargs["policy_noise"] = args.policy_noise * max_action
+        kwargs["noise_clip"] = args.noise_clip * max_action
+        kwargs["policy_freq"] = args.policy_freq
+        policy = TD3.TD3(**kwargs)
+    elif args.policy == 'bootstrap':
+        from bdqn import BootstrapDDQN
+        policy = BootstrapDDQN(**kwargs)
+    elif args.policy == 'random':
+        from utils import RandomPolicy
+        policy = RandomPolicy(**kwargs)
+    elif args.policy == "OurDDPG":
+        import OurDDPG
+        policy = OurDDPG.DDPG(**kwargs)
+    elif args.policy == "DDPG":
+        import DDPG
+        policy = DDPG.DDPG(**kwargs)
+
+    # create experiment directory (may not be used)
+    exp_cnt = 0
+    results_dir = os.path.join(args.savedir, args.exp_name+'%02d'%exp_cnt)
+    while os.path.exists(results_dir):
+        exp_cnt+=1
+        results_dir = os.path.join(args.savedir, args.exp_name+'%02d'%exp_cnt)
+
+    # load model if necessary
+    load_model_path = args.load_model
+    if load_model_path != "":
+        if os.path.isdir(args.load_model):
+            print("loading latest model from dir: {}".format(load_model_path))
+            # find last file
+            search_path = os.path.join(load_model_path, '*.pt')
+            model_files = glob(search_path)
+            if not len(model_files):
+                print('could not find model exp files at {}'.format(search_path))
+                raise
+            else:
+                load_model_path = sorted(model_files)[-1]
+        else:
+            print("loading model from: {}".format(load_model_path))
+
+        print('loading model from {}'.format(load_model_path))
+        policy.load(load_model_path)
+
+        # store in old dir
+        if not args.continue_in_new_dir:
+            results_dir = os.path.split(load_model_path)[0]
+            print("continuing in loaded directory")
+            print(results_dir)
+        else:
+            print("resuming in new directory")
+            print(results_dir)
+        #try:
+        #    info = load_info_dict(load_model_path.replace('.pt', '.info'))
+        #except:
+        #    print('---not able to load info path')
+        #    embed()
+
+    else:
+        if not os.path.exists(results_dir):
+            os.makedirs(results_dir)
+            print('storing results in: {}'.format(results_dir))
+    return policy, load_model_path, results_dir
+
 
 
  
@@ -178,10 +247,10 @@ if __name__ == "__main__":
     parser.add_argument("--eval_replay_size", default=int(500000), type=int, help='number of steps to store in replay buffer')
     parser.add_argument("--save_freq", default=50000, type=int, help='how often to save model and replay buffer')
     parser.add_argument("-ne", "--num_eval_episodes", default=10, type=int, help='')
-    parser.add_argument("--max_timesteps", default=1e7, type=int)   # Max time steps to run environment
-    parser.add_argument("--expl_noise", default=0.1)                # Std of Gaussian exploration noise
-    parser.add_argument("--batch_size", default=256, type=int)      # Batch size for both actor and critic
-    parser.add_argument("--discount", default=0.99)                 # Discount factor
+    parser.add_argument("--max_timesteps", default=1e7, type=int, help='max time steps to run environment')
+    parser.add_argument("--expl_noise", default=0.1, help='std of Gaussian exploration noise')
+    parser.add_argument("--batch_size", default=256, type=int, help='batch size for training agent')
+    parser.add_argument("--discount", default=0.99, help='discount factor')
     parser.add_argument("--state_pixels", default=False, action='store_true', help='return pixels from cameras')                 # Discount factor
     parser.add_argument('-g', "--convert_to_gray", default=False, action='store_true', help='grayscale images')                 # Discount factor
     parser.add_argument("--frame_height", default=120)
@@ -242,71 +311,8 @@ if __name__ == "__main__":
         "tau": args.tau,
         "device":args.device,
     }
-    # Initialize policy
-    if args.policy == "TD3":
-        import TD3
-        # TODO does td3 give pos/neg since we only give max_action
-        # Target policy smoothing is scaled wrt the action scale
-        kwargs["policy_noise"] = args.policy_noise * max_action
-        kwargs["noise_clip"] = args.noise_clip * max_action
-        kwargs["policy_freq"] = args.policy_freq
-        policy = TD3.TD3(**kwargs)
-    elif args.policy == 'bootstrap':
-        from bdqn import BootstrapDDQN
-        policy = BootstrapDDQN(**kwargs)
-    elif args.policy == 'random':
-        from utils import RandomPolicy
-        policy = RandomPolicy(**kwargs)
-    elif args.policy == "OurDDPG":
-        import OurDDPG
-        policy = OurDDPG.DDPG(**kwargs)
-    elif args.policy == "DDPG":
-        import DDPG
-        policy = DDPG.DDPG(**kwargs)
 
-
-    # create experiment directory (may not be used)
-    exp_cnt = 0
-    results_dir = os.path.join(args.savedir, args.exp_name+'%02d'%exp_cnt)
-    while os.path.exists(results_dir):
-        exp_cnt+=1
-        results_dir = os.path.join(args.savedir, args.exp_name+'%02d'%exp_cnt)
-
-    # load model if necessary
-    load_model_path = args.load_model
-    if load_model_path != "":
-        if os.path.isdir(args.load_model):
-            print("loading latest model from dir: {}".format(load_model_path))
-            # find last file
-            search_path = os.path.join(load_model_path, '*.pt')
-            model_files = glob(search_path)
-            if not len(model_files):
-                print('could not find model exp files at {}'.format(search_path))
-                raise
-            else:
-                load_model_path = sorted(model_files)[-1]
-        else:
-            print("loading model from: {}".format(load_model_path))
-        policy.load(load_model_path)
-        # store in old dir
-        if not args.continue_in_new_dir:
-            results_dir = os.path.split(load_model_path)[0]
-            print("continuing in loaded directory")
-            print(results_dir)
-        else:
-            print("resuming in new directory")
-            print(results_dir)
-        #try:
-        #    info = load_info_dict(load_model_path.replace('.pt', '.info'))
-        #except:
-        #    print('---not able to load info path')
-        #    embed()
-
-    if not os.path.exists(results_dir):
-        os.makedirs(results_dir)
-        print('storing results in: {}'.format(results_dir))
-
-
+    policy, load_model_path, results_dir = load_policy()
     if args.eval:
         evaluate()
     else:
