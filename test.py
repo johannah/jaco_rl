@@ -47,9 +47,6 @@ def evaluate():
         num_steps = 0
         state_type, reward, discount, state = eval_env.reset()
         frame_compressed = get_next_frame(eval_env)
-        dir_path = load_model_path.replace('.pt', '_eval%02d'%e) 
-        if not os.path.exists(dir_path):
-            os.makedirs(dir_path)
         while done == False:
             action = (
                     policy.select_action(state['observations'])
@@ -67,20 +64,11 @@ def evaluate():
                               frame_compressed=frame_compressed, 
                               next_frame_compressed=next_frame_compressed)
 
-            f,ax = plt.subplots(1,2)
-            ax[0].imshow(eval_replay_buffer.undo_frame_compression(frame_compressed))
-            ax[1].imshow(eval_replay_buffer.undo_frame_compression(next_frame_compressed))
-            ax[1].set_title(str(reward))
-            img_path = os.path.join(dir_path, 'frame_%05d.png'%num_steps)
-            print('writing', img_path)
-            plt.savefig(img_path)
-            plt.close()
-
             frame_compressed = next_frame_compressed
             state = next_state
             num_steps+=1
         movie_path = load_model_path.replace('.pt', '_eval%02d.mp4'%e) 
-        eval_replay_buffer.plot_frames(movie_path, num_steps)
+        eval_replay_buffer.plot_frames(movie_path, num_steps, plot_pngs=not e)
     # write data files
     print("---------------------------------------")
     eval_step_file_path = load_model_path.replace('.pt', '.epkl') 
@@ -177,14 +165,14 @@ def train():
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--policy", default="TD3", help='Policy name (TD3, DDPG or OurDDPG)')
+    parser.add_argument("--policy", default="bootstrapTD3", help='Policy name (TD3, DDPG or OurDDPG)')
     parser.add_argument("--domain", default="jaco", help='DeepMind Control Suite domain name')
     parser.add_argument("--task", default="relative_reacher_easy", help='Deepmind Control Suite task name')
     parser.add_argument("--seed", default=0, type=int, help='random seed')
     parser.add_argument("--start_timesteps", default=25e3, type=int, help='number of time steps initial random policy is used')
     parser.add_argument("--replay_size", default=int(1e6), type=int, help='number of steps to store in replay buffer')
     parser.add_argument("--eval_replay_size", default=int(500000), type=int, help='number of steps to store in replay buffer')
-    parser.add_argument("--save_freq", default=10000, type=int, help='how often to save model and replay buffer')
+    parser.add_argument("--save_freq", default=50000, type=int, help='how often to save model and replay buffer')
     parser.add_argument("-ne", "--num_eval_episodes", default=10, type=int, help='')
     parser.add_argument("--max_timesteps", default=1e7, type=int)   # Max time steps to run environment
     parser.add_argument("--expl_noise", default=0.1)                # Std of Gaussian exploration noise
@@ -250,7 +238,16 @@ if __name__ == "__main__":
         "device":args.device,
     }
     # Initialize policy
-    if args.policy == "TD3":
+    if args.policy == "bootstrapTD3":
+        import bootstrapTD3
+        # TODO does td3 give pos/neg since we only give max_action
+        # Target policy smoothing is scaled wrt the action scale
+        kwargs["policy_noise"] = args.policy_noise * max_action
+        kwargs["noise_clip"] = args.noise_clip * max_action
+        kwargs["policy_freq"] = args.policy_freq
+        policy = bootstrapTD3.TD3(**kwargs)
+ 
+    elif args.policy == "TD3":
         import TD3
         # TODO does td3 give pos/neg since we only give max_action
         # Target policy smoothing is scaled wrt the action scale

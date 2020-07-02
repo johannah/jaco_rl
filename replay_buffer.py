@@ -1,5 +1,9 @@
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import time
+import os
 import zlib
 import collections
 from dm_control import suite
@@ -98,9 +102,22 @@ class ReplayBuffer(object):
         indexes = self.random_state.randint(0,self.num_steps_available(),batch_size)
         return self.get_indexes(indexes)
         
-    def plot_frames(self, movie_fpath, num_steps=100):
+    def plot_frames(self, movie_fpath, num_steps=100, plot_pngs=False):
         st, ac, re, nst, nd, fr, nfr = self.get_last_steps(num_steps)
         vwrite(movie_fpath, fr)
+        if plot_pngs:
+            dir_path = movie_fpath.replace('.mp4', '')
+            if not os.path.exists(dir_path):
+                os.makedirs(dir_path)
+            for n in range(fr.shape[0]):
+                f,ax = plt.subplots(1,2)
+                ax[0].imshow(fr[n])
+                ax[1].imshow(nfr[n])
+                ax[1].set_title(str(re[n]))
+                img_path = os.path.join(dir_path, 'frame_%05d.png'%n)
+                print('writing', img_path)
+                plt.savefig(img_path)
+                plt.close()
 
 # TODO fix frame
 def test_fake_replay():
