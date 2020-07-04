@@ -77,6 +77,7 @@ class TD3(object):
         device='cpu'
     ):
 
+        self.step = 0
         self.device = device
         self.actor = Actor(state_dim, action_dim, max_action).to(self.device)
         self.actor_target = copy.deepcopy(self.actor)
@@ -103,6 +104,7 @@ class TD3(object):
 
 
     def train(self, step, replay_buffer, batch_size=100):
+        self.step = step
         self.total_it += 1
         # Sample replay buffer
         state, action, reward, next_state, not_done, _, _ = replay_buffer.sample(batch_size)
@@ -110,7 +112,7 @@ class TD3(object):
         action = torch.FloatTensor(action).to(self.device)
         reward = torch.FloatTensor(reward).to(self.device)
         next_state = torch.FloatTensor(next_state).to(self.device)
-        not_done = torch.LongTensor(not_done).to(self.device)
+        not_done = torch.FloatTensor(not_done).to(self.device)
 
         with torch.no_grad():
             # Select action according to policy and add clipped noise
@@ -171,6 +173,11 @@ class TD3(object):
                       'total_it':self.total_it}
         torch.save(model_dict, filepath)
 
+    def get_loss_plot_data(self):
+        plot_dict =  {'critic':(self.loss_dict['critic_step'], self.loss_dict['critic']), 
+                'actor':(self.loss_dict['actor_step'], self.loss_dict['actor'])}
+        return plot_dict
+
     def load(self, filepath):
         print("TD3 loading {}".format(filepath))
         model_dict = torch.load(filepath)
@@ -180,3 +187,8 @@ class TD3(object):
         self.actor_optimizer.load_state_dict(model_dict['actor_optimizer'])
         self.loss_dict = model_dict['loss_dict']
         self.total_it = model_dict['total_it']
+        # TODO this is wrong
+        if len(self.loss_dict['critic_step']):
+            self.step = self.loss_dict['critic_step'][-1]
+        else:
+            self.step = 0

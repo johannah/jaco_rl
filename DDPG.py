@@ -66,6 +66,7 @@ class DDPG(object):
 
 
     def train(self, step, replay_buffer, batch_size=64):
+        self.step = step
         self.total_it+=1
         # Sample replay buffer
         state, action, reward, next_state, not_done, _, _ = replay_buffer.sample(batch_size)
@@ -92,11 +93,12 @@ class DDPG(object):
         critic_loss.backward()
         self.critic_optimizer.step()
 
-        self.loss_dict['critic'].append(critic_loss.item())
         # Compute actor loss
         actor_loss = -self.critic(state, self.actor(state)).mean()
-        self.loss_dict['actor'].append(actor_loss.item())
-        self.loss_dict['step'].append(step)
+        if step % 10:
+            self.loss_dict['critic'].append(critic_loss.item())
+            self.loss_dict['actor'].append(actor_loss.item())
+            self.loss_dict['step'].append(step)
         # Optimize the actor
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
@@ -128,3 +130,4 @@ class DDPG(object):
         self.actor_optimizer.load_state_dict(model_dict['actor_optimizer'])
         self.total_it = model_dict['total_it']
         self.loss_dict = model_dict['loss_dict']
+        self.step = self.loss_dict['step'][-1]

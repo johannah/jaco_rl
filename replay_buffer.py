@@ -1,14 +1,19 @@
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib import cm
+
 import numpy as np
+np.set_printoptions(precision=3, suppress=True)
 import time
 import os
 import zlib
 import collections
+
 from dm_control import suite
 from skvideo.io import vwrite
 from IPython import embed
+
 
 def compress_frame(frame):
     return zlib.compress(frame.tostring())
@@ -28,7 +33,7 @@ class ReplayBuffer(object):
         self.next_states = np.zeros((self.max_size,state_dim), dtype=np.float32)
         self.actions = np.zeros((max_size, action_dim), np.float32)
         self.rewards = np.zeros((max_size, 1), np.float32)
-        self.not_dones = np.zeros((max_size, 1), dtype=np.bool)
+        self.not_dones = np.zeros((max_size, 1), dtype=np.int32)
         # always store next frames
         self.cam_dim = cam_dim
         self.frames = {}; self.next_frames = {}
@@ -110,23 +115,99 @@ class ReplayBuffer(object):
     def sample(self, batch_size):
         indexes = self.random_state.randint(0,self.num_steps_available(),batch_size)
         return self.get_indexes(indexes)
+
+
         
-    def plot_frames(self, movie_fpath, num_steps=100, plot_pngs=False):
-        st, ac, re, nst, nd, fr, nfr = self.get_last_steps(num_steps)
+def plot_frames(movie_fpath, last_steps, plot_pngs=False, plot_action_frames=True, min_action=-.8, max_action=.8, min_reward=-1, max_reward=1):
+    st, ac, re, nst, nd, fr, nfr = last_steps
+    n_steps = ac.shape[0]
+    if plot_action_frames:
+        n_actions = ac.shape[1]
+        n_bars = n_actions + 1
+        _, hsize, fr_wsize, nc = fr.shape
+        wsize = int(fr_wsize*.40)
+        n_bins = wsize
+        cp = n_bins//2
+        hw = hsize//n_bars
+        action_bins = np.linspace(min_action, max_action, n_bins)
+        reward_bins = np.linspace(min_reward, max_reward, n_bins)
+        canvas = np.zeros((n_steps, hsize, wsize+1, nc), dtype=np.uint8)
+        viridis = cm.get_cmap('viridis', n_actions)
+        action_colors = np.array([np.array(viridis(x)[:nc]) for x in  np.linspace(0, 1, n_actions)])
+        action_colors = (action_colors*255).astype(np.uint8)
+        reward_color = np.array([255.0,0.,0.])[:nc]
+        try:
+            for s in range(n_steps):
+                for an,av in enumerate(ac[s]):
+                    b = np.digitize(av, action_bins, right=True)
+                    c = action_colors[an]
+                    inds = np.linspace(cp-(cp-b), cp, np.abs(cp-b)+1, dtype=np.int)
+                    canvas[s,hw*an:(hw*an)+hw,inds] = c
+                rb = np.digitize(re[s][0], reward_bins, right=True)
+                rinds = np.linspace(cp-(cp-rb), cp, np.abs(cp-rb)+1, dtype=np.int)
+                canvas[s,hw*(n_bars-1):(hw*n_bars),rinds] = reward_color
+            output = np.hstack((fr, canvas, nfr))
+            vwrite(movie_fpath, np.array(output))
+        except Exception as e:
+            print(e)
+            embed()
+    else:
         vwrite(movie_fpath, fr)
-        if plot_pngs:
-            dir_path = movie_fpath.replace('.mp4', '')
-            if not os.path.exists(dir_path):
-                os.makedirs(dir_path)
-            for n in range(fr.shape[0]):
-                f,ax = plt.subplots(1,2)
-                ax[0].imshow(fr[n])
-                ax[1].imshow(nfr[n])
-                ax[1].set_title(str(re[n]))
-                img_path = os.path.join(dir_path, 'frame_%05d.png'%n)
-                print('writing', img_path)
-                plt.savefig(img_path)
-                plt.close()
+    if plot_pngs:
+        dir_path = movie_fpath.replace('.mp4', '')
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+        for n in range(fr.shape[0]):
+            f,ax = plt.subplots(1,2)
+            ax[0].imshow(fr[n])
+            ax[1].imshow(nfr[n])
+            action_title = ''
+            for xn, a in enumerate(ac[n]):
+                action_title += ' %.02f'%a
+                if not xn%3:
+                    action_title += '\n' 
+            ax[0].set_title(action_title)
+            ax[1].set_title("S:%s R:%s"%(n,re[n]))
+            img_path = os.path.join(dir_path, 'frame_%05d.png'%n)
+            print('writing', img_path)
+            plt.savefig(img_path)
+            plt.close()
+        cmd = "ffmpeg -pattern_type glob -i '%s' -c:v libx264 '%s' -y"%(os.path.join(dir_path, '*.png'), os.path.join(dir_path, '_movie.mp4'))
+        print('calling {}'.format(cmd))
+        os.system(cmd)
+
+def plot_replay_reward(replay_buffer, load_model_path, start_step=0, name_modifier=''):
+    plt.figure()
+    plt.title("reward")
+    plt.plot(replay_buffer.episode_rewards)
+    plt.savefig(load_model_path.replace('.pt', '_episode_rewards%s.png'%name_modifier))
+    plt.xlabel('episode')
+    plt.ylabel('reward')
+    plt.close()
+
+    plt.figure()
+    plt.title("cumulative reward")
+    plt.plot(np.cumsum(replay_buffer.episode_rewards))
+    plt.savefig(load_model_path.replace('.pt', '_episode_cumulative%s.png'%name_modifier))
+    plt.xlabel('episode')
+    plt.ylabel('total reward')
+    plt.close()
+
+    plt.figure()
+    plt.title("reward")
+    plt.plot(np.array(replay_buffer.episode_start_steps[1:])+start_step, replay_buffer.episode_rewards)
+    plt.savefig(load_model_path.replace('.pt', '_step_rewards%s.png'%name_modifier))
+    plt.xlabel('steps')
+    plt.ylabel('reward')
+    plt.close()
+
+    plt.figure()
+    plt.title("cumulative reward")
+    plt.plot(np.array(replay_buffer.episode_start_steps[1:])+start_step, np.cumsum(replay_buffer.episode_rewards))
+    plt.savefig(load_model_path.replace('.pt', '_step_cumulative%s.png'%name_modifier))
+    plt.xlabel('steps')
+    plt.ylabel('total reward')
+    plt.close()
 
 # TODO fix frame
 def test_fake_replay():
