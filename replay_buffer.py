@@ -135,7 +135,8 @@ def plot_frames(movie_fpath, last_steps, plot_pngs=False, plot_action_frames=Tru
         viridis = cm.get_cmap('viridis', n_actions)
         action_colors = np.array([np.array(viridis(x)[:nc]) for x in  np.linspace(0, 1, n_actions)])
         action_colors = (action_colors*255).astype(np.uint8)
-        reward_color = np.array([255.0,0.,0.])[:nc]
+        # red rewward
+        reward_color = np.array([255,0,0])[:nc]
         try:
             for s in range(n_steps):
                 for an,av in enumerate(ac[s]):
@@ -146,8 +147,8 @@ def plot_frames(movie_fpath, last_steps, plot_pngs=False, plot_action_frames=Tru
                 rb = np.digitize(re[s][0], reward_bins, right=True)
                 rinds = np.linspace(cp-(cp-rb), cp, np.abs(cp-rb)+1, dtype=np.int)
                 canvas[s,hw*(n_bars-1):(hw*n_bars),rinds] = reward_color
-            output = np.hstack((fr, canvas, nfr))
-            vwrite(movie_fpath, np.array(output))
+            output = np.concatenate((fr, canvas, nfr), 2)
+            vwrite(movie_fpath, output)
         except Exception as e:
             print(e)
             embed()
@@ -176,11 +177,26 @@ def plot_frames(movie_fpath, last_steps, plot_pngs=False, plot_action_frames=Tru
         print('calling {}'.format(cmd))
         os.system(cmd)
 
+def rolling_average(a, n=5) :
+    if n == 0:
+        return a
+    ret = np.cumsum(a, dtype=float)
+    ret[n:] = ret[n:] - ret[:-n]
+    return ret[n - 1:] / n
+
 def plot_replay_reward(replay_buffer, load_model_path, start_step=0, name_modifier=''):
+    plt.figure()
+    plt.title("filtered reward")
+    plt.plot(rolling_average(replay_buffer.episode_rewards, 10))
+    plt.savefig(load_model_path.replace('.pt', '_rewards_episode_filt_%s.png'%name_modifier))
+    plt.xlabel('episode')
+    plt.ylabel('reward')
+    plt.close()
+
     plt.figure()
     plt.title("reward")
     plt.plot(replay_buffer.episode_rewards)
-    plt.savefig(load_model_path.replace('.pt', '_episode_rewards%s.png'%name_modifier))
+    plt.savefig(load_model_path.replace('.pt', '_rewards_episode_%s.png'%name_modifier))
     plt.xlabel('episode')
     plt.ylabel('reward')
     plt.close()
@@ -188,7 +204,7 @@ def plot_replay_reward(replay_buffer, load_model_path, start_step=0, name_modifi
     plt.figure()
     plt.title("cumulative reward")
     plt.plot(np.cumsum(replay_buffer.episode_rewards))
-    plt.savefig(load_model_path.replace('.pt', '_episode_cumulative%s.png'%name_modifier))
+    plt.savefig(load_model_path.replace('.pt', '_cumulative_episode_%s.png'%name_modifier))
     plt.xlabel('episode')
     plt.ylabel('total reward')
     plt.close()
@@ -196,7 +212,7 @@ def plot_replay_reward(replay_buffer, load_model_path, start_step=0, name_modifi
     plt.figure()
     plt.title("reward")
     plt.plot(np.array(replay_buffer.episode_start_steps[1:])+start_step, replay_buffer.episode_rewards)
-    plt.savefig(load_model_path.replace('.pt', '_step_rewards%s.png'%name_modifier))
+    plt.savefig(load_model_path.replace('.pt', '_rewards_step_%s.png'%name_modifier))
     plt.xlabel('steps')
     plt.ylabel('reward')
     plt.close()
@@ -204,7 +220,7 @@ def plot_replay_reward(replay_buffer, load_model_path, start_step=0, name_modifi
     plt.figure()
     plt.title("cumulative reward")
     plt.plot(np.array(replay_buffer.episode_start_steps[1:])+start_step, np.cumsum(replay_buffer.episode_rewards))
-    plt.savefig(load_model_path.replace('.pt', '_step_cumulative%s.png'%name_modifier))
+    plt.savefig(load_model_path.replace('.pt', '_cumulative_step_%s.png'%name_modifier))
     plt.xlabel('steps')
     plt.ylabel('total reward')
     plt.close()

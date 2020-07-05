@@ -95,10 +95,9 @@ class DDPG(object):
 
         # Compute actor loss
         actor_loss = -self.critic(state, self.actor(state)).mean()
-        if step % 10:
-            self.loss_dict['critic'].append(critic_loss.item())
-            self.loss_dict['actor'].append(actor_loss.item())
-            self.loss_dict['step'].append(step)
+        self.loss_dict['critic'].append(critic_loss.item())
+        self.loss_dict['actor'].append(actor_loss.item())
+        self.loss_dict['step'].append(step)
         # Optimize the actor
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
@@ -130,4 +129,7 @@ class DDPG(object):
         self.actor_optimizer.load_state_dict(model_dict['actor_optimizer'])
         self.total_it = model_dict['total_it']
         self.loss_dict = model_dict['loss_dict']
-        self.step = self.loss_dict['step'][-1]
+        if len(self.loss_dict['step']):
+            self.step = self.loss_dict['step'][-1]
+        else:
+            self.step = 0

@@ -37,7 +37,6 @@ def get_next_frame(frame_env):
         next_frame = compress_frame(next_frame)
     return next_frame
 
-
 def plot_loss_dict():
     loss_plot_path = load_model_path.replace('.pt', '_loss.png') 
     loss_dict = policy.get_loss_plot_data()
@@ -57,13 +56,14 @@ def evaluate():
     # TODO this isn't right - need to track steps in replay really
 
     train_replay_buffer = load_replay_buffer(train_replay_path)
-    plot_replay_reward(train_replay_buffer, load_model_path, start_step=train_step, name_modifier='_train')
+    plot_replay_reward(train_replay_buffer, load_model_path, start_step=train_step, name_modifier='train')
  
+    eval_seed = args.seed+10
+    random_state = np.random.RandomState(eval_seed)
     eval_step_file_path = load_model_path.replace('.pt', '.epkl') 
     if os.path.exists(eval_step_file_path):
         eval_replay_buffer = load_replay_buffer(eval_step_file_path)
     else:
-        eval_seed = args.seed
         eval_replay_buffer = ReplayBuffer(state_dim, action_dim, 
                                      max_size=int(args.eval_replay_size), 
                                      cam_dim=cam_dim, seed=eval_seed)
@@ -77,6 +77,11 @@ def evaluate():
             frame_compressed = get_next_frame(eval_env)
             # TODO off by one error in step count!? of replay_buffer
             while done == False:
+                #action = (
+                #        policy.select_action(state['observations'])
+                #        + random_state.normal(0, max_action * args.expl_noise, size=action_dim)
+                #    ).clip(-max_action, max_action)
+ 
                 action = (
                         policy.select_action(state['observations'])
                     ).clip(-max_action, max_action)
@@ -96,15 +101,15 @@ def evaluate():
                 num_steps+=1
                 time.sleep(.1)
             movie_path = load_model_path.replace('.pt', '_eval%02d.mp4'%e) 
-            #eval_replay_buffer.plot_frames(movie_path, num_steps, plot_pngs=not e)
             plot_frames(movie_path, eval_replay_buffer.get_last_steps(num_steps), plot_action_frames=True, min_action=min_action, max_action=max_action)
+            #plot_frames(movie_path, eval_replay_buffer.get_last_steps(num_steps), plot_pngs=True, plot_action_frames=True, min_action=min_action, max_action=max_action)
  
    #     write data files
         print("---------------------------------------")
         eval_replay_buffer.shrink_to_last_step()
         pickle.dump(eval_replay_buffer, open(eval_step_file_path, 'wb'))
 
-    plot_replay_reward(eval_replay_buffer, load_model_path, start_step=train_step, name_modifier='_eval')
+    plot_replay_reward(eval_replay_buffer, load_model_path, start_step=train_step, name_modifier='eval')
     return eval_replay_buffer, eval_step_file_path
 
 def load_replay_buffer(load_replay_path, load_model_path=''):
@@ -149,7 +154,7 @@ def train(start_t):
             # Select action randomly or according to policy
             action = (
                     policy.select_action(state['observations'])
-                    + np.random.normal(0, max_action * args.expl_noise, size=action_dim)
+                    + random_state.normal(0, max_action * args.expl_noise, size=action_dim)
                 ).clip(-max_action, max_action)
         # Perform action
         step_type, reward, discount, next_state = env.step(action)
@@ -319,7 +324,6 @@ if __name__ == "__main__":
 
     # Set seeds
     torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
     if not args.state_pixels:
         cam_dim = [0,0,0]
     else:
