@@ -58,7 +58,8 @@ def evaluate():
     train_replay_buffer = load_replay_buffer(train_replay_path)
     plot_replay_reward(train_replay_buffer, load_model_path, start_step=train_step, name_modifier='train')
  
-    eval_seed = args.seed+10
+    # generate random seed
+    eval_seed = args.seed+train_step
     random_state = np.random.RandomState(eval_seed)
     eval_step_file_path = load_model_path.replace('.pt', '.epkl') 
     if os.path.exists(eval_step_file_path):
@@ -100,7 +101,8 @@ def evaluate():
                 state = next_state
                 num_steps+=1
                 time.sleep(.1)
-            movie_path = load_model_path.replace('.pt', '_eval%02d.mp4'%e) 
+            er = int(eval_replay_buffer.episode_rewards[-1]))
+            movie_path = load_model_path.replace('.pt', '_eval%02d_R%s.mp4'%(e,er) 
             plot_frames(movie_path, eval_replay_buffer.get_last_steps(num_steps), plot_action_frames=True, min_action=min_action, max_action=max_action)
             #plot_frames(movie_path, eval_replay_buffer.get_last_steps(num_steps), plot_pngs=True, plot_action_frames=True, min_action=min_action, max_action=max_action)
  
@@ -242,7 +244,13 @@ def load_policy(load_model_path):
 
         print('loading model from {}'.format(load_model_path))
         policy.load(load_model_path)
-        start_step = policy.step
+        try:
+            start_step = int(load_model_path[-13:-3])
+        except:
+            try:
+                start_step = policy.step
+            except:
+                print('unable to get start step from name - set it manually')
 
         # store in old dir
         if not args.continue_in_new_dir:
@@ -319,8 +327,12 @@ if __name__ == "__main__":
     print("---------------------------------------")
     print("Policy: {} Domain: {}, Task: {}, Seed: {}".format(args.policy, args.domain, args.task, args.seed))
     print("---------------------------------------")
+    task_kwargs={'random':args.seed}
+    if args.domain == 'jaco':
+        task_kwargs['fence'] = {'x':(-.2,.2), 'y':(-1.0, .3), 'z':(.15, 1.2)}
+        #task_kwargs['fence'] = {'x':(-5,5), 'y':(-5, 5), 'z':(.15, 1.2)}
 
-    env = suite.load(domain_name=args.domain, task_name=args.task, task_kwargs={'random':args.seed},  environment_kwargs=environment_kwargs)
+    env = suite.load(domain_name=args.domain, task_name=args.task, task_kwargs=task_kwargs,  environment_kwargs=environment_kwargs)
 
     # Set seeds
     torch.manual_seed(args.seed)
