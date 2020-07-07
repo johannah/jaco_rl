@@ -87,12 +87,12 @@ class TD3(object):
         self.critic_target = copy.deepcopy(self.critic)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=3e-4)
 
-        self.max_action = max_action
         self.discount = discount
         self.tau = tau
         self.policy_noise = policy_noise
         self.noise_clip = noise_clip
         self.policy_freq = policy_freq
+        self.max_action = max_action
 
         self.total_it = 0
         self.loss_dict = {'actor':[], 'critic':[], 'critic_step':[], 'actor_step':[]}

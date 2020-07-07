@@ -79,7 +79,6 @@ class ReplayBuffer(object):
         # track episode rollovers
         self.episodic_reward += reward
         if done:
-            self.episode_count += 1
             self.episode_start_steps.append(self.size)
             self.episode_start_times.append(time.time())
             self.episode_rewards.append(self.episodic_reward)
@@ -88,6 +87,7 @@ class ReplayBuffer(object):
             print('EPISODE {} END: Ep R: {} Ep Time: {} Ep Steps:{} Total Steps: {}'.format(self.episode_count, 
                                                                                             self.episodic_reward, 
                                                                                             e_time, e_steps, self.size))
+            self.episode_count += 1
             self.episodic_reward = 0
 
         self.ptr = (self.ptr + 1) % self.max_size
@@ -118,7 +118,7 @@ class ReplayBuffer(object):
 
 
         
-def plot_frames(movie_fpath, last_steps, plot_pngs=False, plot_action_frames=True, min_action=-.8, max_action=.8, min_reward=-1, max_reward=1):
+def plot_frames(movie_fpath, last_steps, plot_frames=False, plot_action_frames=True, min_action=-.8, max_action=.8, min_reward=-1, max_reward=1):
     st, ac, re, nst, nd, fr, nfr = last_steps
     n_steps = ac.shape[0]
     if plot_action_frames:
@@ -154,7 +154,7 @@ def plot_frames(movie_fpath, last_steps, plot_pngs=False, plot_action_frames=Tru
             embed()
     else:
         vwrite(movie_fpath, fr)
-    if plot_pngs:
+    if plot_frames:
         dir_path = movie_fpath.replace('.mp4', '')
         if not os.path.exists(dir_path):
             os.makedirs(dir_path)
@@ -170,7 +170,8 @@ def plot_frames(movie_fpath, last_steps, plot_pngs=False, plot_action_frames=Tru
             ax[0].set_title(action_title)
             ax[1].set_title("S:%s R:%s"%(n,re[n]))
             img_path = os.path.join(dir_path, 'frame_%05d.png'%n)
-            print('writing', img_path)
+            if not n %20:
+                print('writing', img_path)
             plt.savefig(img_path)
             plt.close()
         cmd = "ffmpeg -pattern_type glob -i '%s' -c:v libx264 '%s' -y"%(os.path.join(dir_path, '*.png'), os.path.join(dir_path, '_movie.mp4'))
