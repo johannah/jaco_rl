@@ -186,7 +186,6 @@ def rolling_average(a, n=5) :
     return ret[n - 1:] / n
 
 def plot_replay_reward(replay_buffer, load_model_path, start_step=0, name_modifier=''):
-
     st = np.array(replay_buffer.episode_start_times)
     plt.figure()
     plt.title("Episode Time")

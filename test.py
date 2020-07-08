@@ -28,11 +28,7 @@ def equal_quantization(n_bins, actions):
 def get_next_frame(frame_env):
     next_frame = None
     if args.state_pixels:
-        if args.camera_view == '':
-            # TODO there is a way to invoke default - should figure out its name
-            next_frame = frame_env.physics.render(height=args.frame_height,width=args.frame_width)
-        else:
-            next_frame = frame_env.physics.render(height=args.frame_height,width=args.frame_width,camera_id=args.camera_view)
+        next_frame = frame_env.physics.render(height=args.frame_height,width=args.frame_width,camera_id=args.camera_view)
         if args.convert_to_gray:
             next_frame = img_as_ubyte(rgb2gray(next_frame)[:,:,None])
         next_frame = compress_frame(next_frame)
@@ -52,10 +48,10 @@ def plot_loss_dict(policy, load_model_path):
 def evaluate(load_model_filepath):
     print("starting evaluation for {} episodes".format(args.num_eval_episodes))
     policy, train_step, load_model_path, results_dir = load_policy(load_model_filepath, kwargs=kwargs)
-    eval_env = suite.load(domain_name=args.domain, task_name=args.task, task_kwargs=task_kwargs,  environment_kwargs=environment_kwargs)
-    plot_loss_dict(policy, load_model_path)
     eval_seed = args.seed+train_step
     task_kwargs['random'] = eval_seed
+    eval_env = suite.load(domain_name=args.domain, task_name=args.task, task_kwargs=task_kwargs,  environment_kwargs=environment_kwargs)
+    plot_loss_dict(policy, load_model_path)
     train_replay_path = load_model_path.replace('.pt', '.pkl')
     # TODO this isn't right - need to track steps in replay really
 
@@ -64,7 +60,7 @@ def evaluate(load_model_filepath):
  
     # generate random seed
     random_state = np.random.RandomState(eval_seed)
-    eval_step_file_path = load_model_path.replace('.pt', '.epkl') 
+    eval_step_file_path = load_model_path.replace('.pt', '%s.epkl'%args.eval_filename_modifier) 
     if os.path.exists(eval_step_file_path):
         print('loading existing replay buffer:{}'.format(eval_step_file_path))
         eval_replay_buffer = load_replay_buffer(eval_step_file_path)
@@ -81,15 +77,10 @@ def evaluate(load_model_filepath):
             frame_compressed = get_next_frame(eval_env)
             # TODO off by one error in step count!? of replay_buffer
             while done == False:
-                #action = (
-                #        policy.select_action(state['observations'])
-                #        + random_state.normal(0, max_action * args.expl_noise, size=action_dim)
-                #    ).clip(-max_action, max_action)
- 
                 action = (
                         policy.select_action(state['observations'])
                     ).clip(-kwargs['max_action'], kwargs['max_action'])
-                print('E{}N{}'.format(e,num_steps))
+                #print('E{}N{}'.format(e,num_steps))
 
                 # Perform action
                 step_type, reward, discount, next_state = eval_env.step(action)
@@ -108,7 +99,7 @@ def evaluate(load_model_filepath):
  
 
             er = np.int(eval_replay_buffer.episode_rewards[-1])
-            emovie_path = load_model_path.replace('.pt', '_eval_E{}_R{}.mp4'.format(e, er))
+            emovie_path = load_model_path.replace('.pt', '_eval_E{}_R{}_{}_{}.mp4'.format(e, er, args.eval_filename_modifier, args.camera_view))
             plot_frames(emovie_path, eval_replay_buffer.get_last_steps(num_steps), plot_action_frames=args.plot_action_movie, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=args.plot_frames)
         # write data files
         print("---------------------------------------")
@@ -118,7 +109,7 @@ def evaluate(load_model_filepath):
     plot_replay_reward(eval_replay_buffer, load_model_path, start_step=train_step, name_modifier='eval')
 
     if args.plot_movie:
-        movie_path = load_model_path.replace('.pt', '_eval.mp4')
+        movie_path = load_model_path.replace('.pt', '_eval_{}.mp4'.format(args.eval_filename_modifier))
         plot_frames(movie_path, eval_replay_buffer.get_last_steps(eval_replay_buffer.size), plot_action_frames=args.plot_action_movie, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=args.plot_frames)
     return eval_replay_buffer, eval_step_file_path
 
@@ -307,6 +298,7 @@ if __name__ == "__main__":
     parser.add_argument("--policy", default="TD3", help='Policy name (TD3, DDPG or OurDDPG)')
     parser.add_argument("--domain", default="reacher", help='DeepMind Control Suite domain name')
     parser.add_argument("--task", default="easy", help='Deepmind Control Suite task name')
+    parser.add_argument("--use_robot", default=False, action='store_true')
     parser.add_argument("--seed", default=0, type=int, help='random seed')
     parser.add_argument("--start_timesteps", default=25e3, type=int, help='number of time steps initial random policy is used')
     parser.add_argument("--replay_size", default=int(2e6), type=int, help='number of steps to store in replay buffer')
@@ -335,7 +327,8 @@ if __name__ == "__main__":
     parser.add_argument('-pf', "--plot_frames", default=False, action='store_true', help='write a movie and individual frames')                 
     parser.add_argument('-ee', "--eval_all", default=False, action='store_true', help='evaluate all models in specified directory')                 # Discount factor
 
-    parser.add_argument('-cv', '--camera_view', default='', help='camera view to use') 
+    parser.add_argument('-cv', '--camera_view', default=-1, help='camera view to use. -1 will use the default view.') 
+    parser.add_argument('-efm', '--eval_filename_modifier', default='')
     parser.add_argument('-d', '--device', default='cpu')   # use gpu rather than cpu for computation
     parser.add_argument('-fn', '--fence_name', default='jodesk', help='virtual fence name that prevents jaco from leaving this region.')   # use gpu rather than cpu for computation
     parser.add_argument("--load_model", default="")                 # Model load file name, "" doesn't load, "default" uses file_name
@@ -347,8 +340,8 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if args.eval or args.eval_all:
-        args.state_pixels = True
+    #if args.eval or args.eval_all:
+    #    args.state_pixels = True
         
     environment_kwargs = {'flat_observation':True}
 
@@ -359,23 +352,37 @@ if __name__ == "__main__":
     print("---------------------------------------")
     # info for particular task
     task_kwargs = {}
+    _env = suite.load(domain_name=args.domain, task_name=args.task, task_kwargs=task_kwargs,  environment_kwargs=environment_kwargs)
+    kwargs = get_kwargs(_env)
+    del _env
+
+    # the real robot hits itself at 0.4141065692261898, 1.7588605071769132, 1.3986513249868833, 1.0891524583774879, 0.0390365195510298, 5.14543601786255, 0.6674719255901401, -0.0012319971190548208
+    bang_action = np.array([0.4141065692261898, 1.7588605071769132, 1.3986513249868833, 1.0891524583774879, 0.0390365195510298, 5.14543601786255, 0.6674719255901401, -0.0012319971190548208])
     if args.domain == 'jaco':
         if args.fence_name == 'jodesk':
-            #task_kwargs['fence'] = {'x':(-.5,.5), 'y':(-1.0, .35), 'z':(.15, 1.2)}
+            # .1f is too low - joint 4 hit sometimes!!!!
             task_kwargs['fence'] = {'x':(-.5,.5), 'y':(-1.0, .4), 'z':(.15, 1.2)}
         else:
             task_kwargs['fence'] = {'x':(-5,5), 'y':(-5, 5), 'z':(.15, 1.2)}
+        if args.use_robot:
+            task_kwargs['physics_type'] = 'robot'
+            args.eval_filename_modifier += 'robot'
+        else:
+            task_kwargs['physics_type'] = 'mujoco'
+
     if not args.state_pixels:
         cam_dim = [0,0,0]
     else:
+        ## -1 is default camera view, but we also allow named cameras
+        #try:
+        #    args.camera_view = int(args.camera_view)
+        #except:
+        #    pass
+            
         if args.convert_to_gray:
             cam_dim = [args.frame_height, args.frame_width, 1]
         else:
             cam_dim = [args.frame_height, args.frame_width, 3]
-
-    _env = suite.load(domain_name=args.domain, task_name=args.task, task_kwargs=task_kwargs,  environment_kwargs=environment_kwargs)
-    kwargs = get_kwargs(_env)
-    del _env
 
     # Set seeds
     torch.manual_seed(args.seed)
