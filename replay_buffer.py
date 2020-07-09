@@ -162,13 +162,22 @@ def plot_frames(movie_fpath, last_steps, plot_frames=False, plot_action_frames=T
             f,ax = plt.subplots(1,2)
             ax[0].imshow(fr[n])
             ax[1].imshow(nfr[n])
+            exjt_title = 'J4:'
+            for xn, ej in enumerate(st[n][-9:]):
+                exjt_title += ' %.02f'%ej
+                if  xn ==2:
+                    exjt_title += '\nJ6:' 
+                if  xn ==5:
+                    exjt_title += '\nJ7:' 
+            exjt_title += '\n' 
+ 
             action_title = ''
             for xn, a in enumerate(ac[n]):
                 action_title += ' %.02f'%a
                 if not xn%3:
                     action_title += '\n' 
             ax[0].set_title(action_title)
-            ax[1].set_title("S:%s R:%s"%(n,re[n]))
+            ax[1].set_title(exjt_title+"S:%s R:%s"%(n,re[n]))
             img_path = os.path.join(dir_path, 'frame_%05d.png'%n)
             if not n %20:
                 print('writing', img_path)
@@ -185,12 +194,12 @@ def rolling_average(a, n=5) :
     ret[n:] = ret[n:] - ret[:-n]
     return ret[n - 1:] / n
 
-def plot_replay_reward(replay_buffer, load_model_path, start_step=0, name_modifier=''):
+def plot_replay_reward(replay_buffer, load_model_base, start_step=0, name_modifier=''):
     st = np.array(replay_buffer.episode_start_times)
     plt.figure()
     plt.title("Episode Time")
     plt.plot(st[1:]-st[:-1])
-    plt.savefig(load_model_path.replace('.pt', '_seconds_episode_%s.png'%name_modifier))
+    plt.savefig(load_model_base+'_seconds_episode_%s.png'%name_modifier))
     plt.xlabel('episode')
     plt.ylabel('seconds')
     plt.close()
@@ -198,7 +207,7 @@ def plot_replay_reward(replay_buffer, load_model_path, start_step=0, name_modifi
     plt.figure()
     plt.title("filtered reward")
     plt.plot(rolling_average(replay_buffer.episode_rewards, 10))
-    plt.savefig(load_model_path.replace('.pt', '_rewards_episode_filt_%s.png'%name_modifier))
+    plt.savefig(load_model_base+'_rewards_episode_filt_%s.png'%name_modifier))
     plt.xlabel('episode')
     plt.ylabel('reward')
     plt.close()
@@ -206,7 +215,7 @@ def plot_replay_reward(replay_buffer, load_model_path, start_step=0, name_modifi
     plt.figure()
     plt.title("reward")
     plt.plot(replay_buffer.episode_rewards)
-    plt.savefig(load_model_path.replace('.pt', '_rewards_episode_%s.png'%name_modifier))
+    plt.savefig(load_model_base+'_rewards_episode_%s.png'%name_modifier))
     plt.xlabel('episode')
     plt.ylabel('reward')
     plt.close()
@@ -214,7 +223,7 @@ def plot_replay_reward(replay_buffer, load_model_path, start_step=0, name_modifi
     plt.figure()
     plt.title("cumulative reward")
     plt.plot(np.cumsum(replay_buffer.episode_rewards))
-    plt.savefig(load_model_path.replace('.pt', '_cumulative_episode_%s.png'%name_modifier))
+    plt.savefig(load_model_base+'_cumulative_episode_%s.png'%name_modifier))
     plt.xlabel('episode')
     plt.ylabel('total reward')
     plt.close()
@@ -222,7 +231,7 @@ def plot_replay_reward(replay_buffer, load_model_path, start_step=0, name_modifi
     plt.figure()
     plt.title("reward")
     plt.plot(np.array(replay_buffer.episode_start_steps[1:])+start_step, replay_buffer.episode_rewards)
-    plt.savefig(load_model_path.replace('.pt', '_rewards_step_%s.png'%name_modifier))
+    plt.savefig(load_model_base+'_rewards_step_%s.png'%name_modifier))
     plt.xlabel('steps')
     plt.ylabel('reward')
     plt.close()
@@ -230,7 +239,7 @@ def plot_replay_reward(replay_buffer, load_model_path, start_step=0, name_modifi
     plt.figure()
     plt.title("cumulative reward")
     plt.plot(np.array(replay_buffer.episode_start_steps[1:])+start_step, np.cumsum(replay_buffer.episode_rewards))
-    plt.savefig(load_model_path.replace('.pt', '_cumulative_step_%s.png'%name_modifier))
+    plt.savefig(load_model_base+'_cumulative_step_%s.png'%name_modifier))
     plt.xlabel('steps')
     plt.ylabel('total reward')
     plt.close()

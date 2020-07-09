@@ -50,7 +50,6 @@ def evaluate(load_model_filepath):
     policy, train_step, load_model_path, results_dir = load_policy(load_model_filepath, kwargs=kwargs)
     eval_seed = args.seed+train_step
     task_kwargs['random'] = eval_seed
-    eval_env = suite.load(domain_name=args.domain, task_name=args.task, task_kwargs=task_kwargs,  environment_kwargs=environment_kwargs)
     plot_loss_dict(policy, load_model_path)
     train_replay_path = load_model_path.replace('.pt', '.pkl')
     # TODO this isn't right - need to track steps in replay really
@@ -65,6 +64,8 @@ def evaluate(load_model_filepath):
         print('loading existing replay buffer:{}'.format(eval_step_file_path))
         eval_replay_buffer = load_replay_buffer(eval_step_file_path)
     else:
+
+        eval_env = suite.load(domain_name=args.domain, task_name=args.task, task_kwargs=task_kwargs,  environment_kwargs=environment_kwargs)
         eval_replay_buffer = ReplayBuffer(kwargs['state_dim'], kwargs['action_dim'], 
                                      max_size=int(args.eval_replay_size), 
                                      cam_dim=cam_dim, seed=eval_seed)
@@ -203,7 +204,6 @@ def load_policy(load_model_path, kwargs={}):
     start_step = 0
     if args.policy == "TD3":
         import TD3
-        # TODO does td3 give pos/neg since we only give max_action
         # Target policy smoothing is scaled wrt the action scale
         kwargs["policy_noise"] = args.policy_noise * kwargs['max_action']
         kwargs["noise_clip"] = args.noise_clip * kwargs['max_action']
@@ -311,8 +311,8 @@ if __name__ == "__main__":
     parser.add_argument("--discount", default=0.99, help='discount factor')
     parser.add_argument("--state_pixels", default=False, action='store_true', help='return pixels from cameras')                 # Discount factor
     parser.add_argument('-g', "--convert_to_gray", default=False, action='store_true', help='grayscale images')                 # Discount factor
-    parser.add_argument("--frame_height", default=120)
-    parser.add_argument("--frame_width", default=120)
+    parser.add_argument("--frame_height", default=200)
+    parser.add_argument("--frame_width", default=240)
     #parser.add_argument("--time_limit", default=10)                 # Time in seconds allowed to complete mujoco task
     parser.add_argument("--tau", default=0.005)                     # Target network update rate
     parser.add_argument("--policy_noise", default=0.2)              # Noise added to target policy during critic update
@@ -352,12 +352,11 @@ if __name__ == "__main__":
     print("---------------------------------------")
     # info for particular task
     task_kwargs = {}
+    task_kwargs['target_position'] = args.target_position
     _env = suite.load(domain_name=args.domain, task_name=args.task, task_kwargs=task_kwargs,  environment_kwargs=environment_kwargs)
     kwargs = get_kwargs(_env)
     del _env
 
-    # the real robot hits itself at 0.4141065692261898, 1.7588605071769132, 1.3986513249868833, 1.0891524583774879, 0.0390365195510298, 5.14543601786255, 0.6674719255901401, -0.0012319971190548208
-    bang_action = np.array([0.4141065692261898, 1.7588605071769132, 1.3986513249868833, 1.0891524583774879, 0.0390365195510298, 5.14543601786255, 0.6674719255901401, -0.0012319971190548208])
     if args.domain == 'jaco':
         if args.fence_name == 'jodesk':
             # .1f is too low - joint 4 hit sometimes!!!!
