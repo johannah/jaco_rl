@@ -50,14 +50,14 @@ class RandomPolicy(BasePolicy):
         return action
 
 def save_info_dict(info, base_save_path):
-    pickle.dump(info, open(base_save_path+'.txt', 'wb'))
+    pickle.dump(info, open(base_save_path+'.infopkl', 'wb'))
 
 def load_info_dict(base_load_path):
-    return pickle.load(open(base_load_path+'.txt', 'rb'))
+    return pickle.load(open(base_load_path+'.infopkl', 'rb'))
 
-def create_new_info_dict(arg_dict, load_model_path='', load_replay_path=''):
+def create_new_info_dict(arg_dict, load_model_base='', load_replay_path=''):
     info = {
-            'load_model_path':load_model_path,
+            'load_model_path':load_model_base+'.pt',
             'load_replay_path':load_replay_path,
             'save_start_times':[],
             'save_end_times':[],

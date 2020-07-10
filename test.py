@@ -2,6 +2,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from copy import deepcopy
 import numpy as np
 import torch
 import argparse
@@ -9,7 +10,7 @@ import os
 import sys
 import pickle
 import utils
-from replay_buffer import ReplayBuffer, compress_frame, plot_frames, plot_replay_reward
+from replay_buffer import ReplayBuffer, compress_frame, plot_frames, plot_replay_reward, plot_states, plot_position_actions
 import time
 from glob import glob
 
@@ -34,8 +35,8 @@ def get_next_frame(frame_env):
         next_frame = compress_frame(next_frame)
     return next_frame
 
-def plot_loss_dict(policy, load_model_path):
-    loss_plot_path = load_model_path.replace('.pt', '_loss.png') 
+def plot_loss_dict(policy, load_model_base):
+    loss_plot_path = load_model_base + '_loss.png'
     loss_dict = policy.get_loss_plot_data()
     plt.figure()
     for key, val in loss_dict.items():
@@ -45,27 +46,58 @@ def plot_loss_dict(policy, load_model_path):
     plt.savefig(loss_plot_path)
     plt.close()
     
+def get_state_names_dict():
+    plot_environment_kwargs = deepcopy(environment_kwargs)
+    plot_environment_kwargs['flat_observation'] = False
+    _plot_env = suite.load(domain_name=args.domain, task_name=args.task, task_kwargs=task_kwargs,  environment_kwargs=plot_environment_kwargs)
+    plot_spec = _plot_env.observation_spec()
+    del _plot_env; del plot_environment_kwargs
+    state_names_dict = {}
+    st = 0
+    for key in plot_spec.keys():
+        for ind in range(plot_spec[key].shape[0]):
+            state_names_dict[key+'_%02d'%ind] = np.arange(st+ind, st+ind+1)
+        st = st+ind+1
+    return state_names_dict
+ 
 def evaluate(load_model_filepath):
     print("starting evaluation for {} episodes".format(args.num_eval_episodes))
-    policy, train_step, load_model_path, results_dir = load_policy(load_model_filepath, kwargs=kwargs)
+    policy, train_step, results_dir, loaded_modelpath = load_policy(load_model_filepath)
     eval_seed = args.seed+train_step
     task_kwargs['random'] = eval_seed
-    plot_loss_dict(policy, load_model_path)
-    train_replay_path = load_model_path.replace('.pt', '.pkl')
+    load_model_base = loaded_modelpath.replace('.pt', '')
+    plot_loss_dict(policy, load_model_base)
     # TODO this isn't right - need to track steps in replay really
 
-    train_replay_buffer = load_replay_buffer(train_replay_path)
-    plot_replay_reward(train_replay_buffer, load_model_path, start_step=train_step, name_modifier='train')
- 
+    state_names_dict = get_state_names_dict()
+    train_replay_buffer = load_replay_buffer(load_model_base + '.pkl')
+
+    eval_env = suite.load(domain_name=args.domain, task_name=args.task, task_kwargs=task_kwargs,  environment_kwargs=environment_kwargs)
+
     # generate random seed
     random_state = np.random.RandomState(eval_seed)
-    eval_step_file_path = load_model_path.replace('.pt', '%s.epkl'%args.eval_filename_modifier) 
-    if os.path.exists(eval_step_file_path):
-        print('loading existing replay buffer:{}'.format(eval_step_file_path))
-        eval_replay_buffer = load_replay_buffer(eval_step_file_path)
+    train_dir = os.path.join(load_model_base + '_train%s'%args.eval_filename_modifier)
+    if not os.path.exists(train_dir):
+        os.makedirs(train_dir)
+    train_base = os.path.join(train_dir, get_step_filename(train_step)+'_train')
+    plot_replay_reward(train_replay_buffer, train_base, start_step=train_step, name_modifier='train')
+    plot_states(train_replay_buffer.get_last_steps(train_replay_buffer.size), 
+                train_base, detail_dict=state_names_dict)
+ 
+
+    eval_dir = os.path.join(load_model_base + '_eval%s'%args.eval_filename_modifier)
+    if not os.path.exists(eval_dir):
+        os.makedirs(eval_dir)
+    print('saving results to dir: {}'.format(eval_dir))
+    eval_base = os.path.join(eval_dir, get_step_filename(train_step)+'_eval{:05d}'.format(eval_seed))
+
+
+    eval_step_filepath = load_model_base + '.epkl'
+    if os.path.exists(eval_step_filepath) and not args.overwrite_replay:
+        print('loading existing replay buffer:{}'.format(eval_step_filepath))
+        eval_replay_buffer = load_replay_buffer(eval_step_filepath)
     else:
 
-        eval_env = suite.load(domain_name=args.domain, task_name=args.task, task_kwargs=task_kwargs,  environment_kwargs=environment_kwargs)
         eval_replay_buffer = ReplayBuffer(kwargs['state_dim'], kwargs['action_dim'], 
                                      max_size=int(args.eval_replay_size), 
                                      cam_dim=cam_dim, seed=eval_seed)
@@ -99,20 +131,28 @@ def evaluate(load_model_filepath):
                 time.sleep(.1)
  
 
+            # plot episode
             er = np.int(eval_replay_buffer.episode_rewards[-1])
-            emovie_path = load_model_path.replace('.pt', '_eval_E{}_R{}_{}_{}.mp4'.format(e, er, args.eval_filename_modifier, args.camera_view))
+            epath = eval_base+ '_E{}_R{}'.format(e, er)
+            exp = eval_replay_buffer.get_last_steps(num_steps)
+            plot_states(exp, epath, detail_dict=state_names_dict)
+            if args.domain == 'jaco':
+                plot_position_actions(exp, epath, relative=True)
+            emovie_path = epath+'CAM{}.mp4'.format(e, er, args.camera_view)
             plot_frames(emovie_path, eval_replay_buffer.get_last_steps(num_steps), plot_action_frames=args.plot_action_movie, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=args.plot_frames)
         # write data files
         print("---------------------------------------")
         eval_replay_buffer.shrink_to_last_step()
-        pickle.dump(eval_replay_buffer, open(eval_step_file_path, 'wb'))
+        pickle.dump(eval_replay_buffer, open(eval_step_filepath, 'wb'))
 
-    plot_replay_reward(eval_replay_buffer, load_model_path, start_step=train_step, name_modifier='eval')
+    plot_replay_reward(eval_replay_buffer, eval_base, start_step=train_step, name_modifier='eval')
+    plot_states(eval_replay_buffer.get_last_steps(eval_replay_buffer.size), 
+                eval_base, detail_dict=state_names_dict)
 
     if args.plot_movie:
-        movie_path = load_model_path.replace('.pt', '_eval_{}.mp4'.format(args.eval_filename_modifier))
+        movie_path = eval_base+'_CAM{}.mp4'.format( args.camera_view)
         plot_frames(movie_path, eval_replay_buffer.get_last_steps(eval_replay_buffer.size), plot_action_frames=args.plot_action_movie, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=args.plot_frames)
-    return eval_replay_buffer, eval_step_file_path
+    return eval_replay_buffer, eval_step_filepath
 
 def load_replay_buffer(load_replay_path, load_model_path='', kwargs={}, seed=None):
     # load replay buffer
@@ -139,15 +179,21 @@ def load_replay_buffer(load_replay_path, load_model_path='', kwargs={}, seed=Non
         replay_buffer = pickle.load(open(load_replay_path, 'rb'))
     return replay_buffer
 
-def train(load_model_path):
+def get_step_filename(t):
+    return "{}_{}_{}_{:05d}_{:010d}".format(args.exp_name, args.policy, args.domain, args.seed, t)
+
+def get_step_filepath(results_dir, t):
+    return os.path.join(results_dir, get_step_filename(t))
+
+def train():
     task_kwargs['random'] = args.seed
     random_state = np.random.RandomState(task_kwargs['random'])
-    policy, start_t, load_model_path, results_dir = load_policy(load_model_path, kwargs=kwargs)
+    policy, start_t, results_dir, loaded_modelpath = load_policy(args.load_model)
     env = suite.load(domain_name=args.domain, task_name=args.task, task_kwargs=task_kwargs,  environment_kwargs=environment_kwargs)
     #TODO - use action dim instead? 
     action_shape = env.action_spec().shape
-    replay_buffer = load_replay_buffer(load_replay_path=args.load_replay, load_model_path=load_model_path, kwargs=kwargs, seed=args.seed)
-    info = utils.create_new_info_dict(args, load_model_path, args.load_replay)
+    replay_buffer = load_replay_buffer(load_replay_path=args.load_replay, load_model_path=args.load_model, kwargs=kwargs, seed=args.seed)
+    info = utils.create_new_info_dict(args, loaded_modelpath, args.load_replay)
     done = False
     state_type, reward, discount, state = env.reset()
     frame_compressed = get_next_frame(env)
@@ -184,22 +230,21 @@ def train(load_model_path):
 
         # write data files so they can be used for eval
         if t % args.save_freq == 0:
-            step_file_name = "{}_{}_{}_{:05d}_{:010d}".format(args.exp_name, args.policy, args.domain, args.seed, t)
             st = time.time()
             info['save_start_times'].append(st)
             print("---------------------------------------")
-            step_file_path = os.path.join(results_dir, step_file_name)
-            print("writing data files", step_file_name)
+            step_filepath = get_step_filepath(results_dir, t)
+            print("writing data files", step_filepath)
             # getting stuck here
-            pickle.dump(replay_buffer, open(step_file_path+'.pkl', 'wb'))
-            policy.save(step_file_path+'.pt')
+            pickle.dump(replay_buffer, open(step_filepath+'.pkl', 'wb'))
+            policy.save(step_filepath+'.pt')
             et = time.time()
             info['save_end_times'].append(et)
-            utils.save_info_dict(info, step_file_path)
+            utils.save_info_dict(info, step_filepath)
             print("finished writing files in {} secs".format(et-st))
  
 
-def load_policy(load_model_path, kwargs={}):
+def load_policy(load_from):
     # Initialize policy
     start_step = 0
     if args.policy == "TD3":
@@ -224,17 +269,18 @@ def load_policy(load_model_path, kwargs={}):
 
     # create experiment directory (may not be used)
     exp_cnt = 0
+    load_model_path = ''
     results_dir = os.path.join(args.savedir, args.exp_name+'%02d'%exp_cnt)
     while os.path.exists(results_dir):
         exp_cnt+=1
         results_dir = os.path.join(args.savedir, args.exp_name+'%02d'%exp_cnt)
 
     # load model if necessary
-    if load_model_path != "":
-        if os.path.isdir(load_model_path):
-            print("loading latest model from dir: {}".format(load_model_path))
+    if load_from != "":
+        if os.path.isdir(load_from):
+            print("loading latest model from dir: {}".format(load_from))
             # find last file
-            search_path = os.path.join(load_model_path, '*.pt')
+            search_path = os.path.join(load_from, '*.pt')
             model_files = glob(search_path)
             if not len(model_files):
                 print('could not find model exp files at {}'.format(search_path))
@@ -242,10 +288,11 @@ def load_policy(load_model_path, kwargs={}):
             else:
                 load_model_path = sorted(model_files)[-1]
         else:
-            print("loading model from: {}".format(load_model_path))
-
-        print('loading model from {}'.format(load_model_path))
+            load_model_path = load_from
+            print("loading model from file: {}".format(load_model_path))
         policy.load(load_model_path)
+        # TODO 
+        # utils.load_info_dict(load_model_base)
         try:
             start_step = int(load_model_path[-13:-3])
         except:
@@ -272,7 +319,7 @@ def load_policy(load_model_path, kwargs={}):
         if not os.path.exists(results_dir):
             os.makedirs(results_dir)
             print('storing results in: {}'.format(results_dir))
-    return policy, start_step, load_model_path, results_dir
+    return policy, start_step, results_dir, load_model_path
 
 def get_kwargs(env):
     state_dim = env.observation_spec()['observations'].shape[0]
@@ -298,8 +345,9 @@ if __name__ == "__main__":
     parser.add_argument("--policy", default="TD3", help='Policy name (TD3, DDPG or OurDDPG)')
     parser.add_argument("--domain", default="reacher", help='DeepMind Control Suite domain name')
     parser.add_argument("--task", default="easy", help='Deepmind Control Suite task name')
-    parser.add_argument("--use_robot", default=False, action='store_true')
     parser.add_argument("--seed", default=0, type=int, help='random seed')
+    parser.add_argument("--use_robot", default=False, action='store_true')
+    parser.add_argument('-owr', "--overwrite_replay", default=False, action='store_true', help='gather new eval replay experience even if there is already a .pkl file')
     parser.add_argument("--start_timesteps", default=25e3, type=int, help='number of time steps initial random policy is used')
     parser.add_argument("--replay_size", default=int(2e6), type=int, help='number of steps to store in replay buffer')
     parser.add_argument("--save_freq", default=50000, type=int, help='how often to save model and replay buffer')
@@ -331,7 +379,7 @@ if __name__ == "__main__":
     parser.add_argument('-efm', '--eval_filename_modifier', default='')
     parser.add_argument('-d', '--device', default='cpu')   # use gpu rather than cpu for computation
     parser.add_argument('-fn', '--fence_name', default='jodesk', help='virtual fence name that prevents jaco from leaving this region.')   # use gpu rather than cpu for computation
-    parser.add_argument("--load_model", default="")                 # Model load file name, "" doesn't load, "default" uses file_name
+    parser.add_argument("--load_model", default="")                 # Model load file name, "" doesn't load, "default" uses filename
     parser.add_argument("--load_replay", default="", help='Indicate replay buffer to load past experience from. Options are ["", "empty", file path of replay buffer.pkl]. If empty string, a new replay buffer will be created unless --load_model was invoked, in that case, the respective replay buffer will be loaded. If set to "empty", an new buffer will be created regardless of if --load_model was invoked.')
     parser.add_argument("--exp_name", default="test")               
     parser.add_argument("-ctn", "--continue_in_new_dir", default=False, action="store_true", help='If true, store results from loaded model in newly generated directory instead of resuming from loaded dir (possibly overwriting existing files).')               
@@ -346,18 +394,19 @@ if __name__ == "__main__":
     environment_kwargs = {'flat_observation':True}
 
     num_steps = 0
-    file_name = "{}_{}_{}_{:05d}".format(args.exp_name, args.policy, args.domain, args.seed)
     print("---------------------------------------")
     print("Policy: {} Domain: {}, Task: {}, Seed: {}".format(args.policy, args.domain, args.task, args.seed))
     print("---------------------------------------")
     # info for particular task
     task_kwargs = {}
-    task_kwargs['target_position'] = args.target_position
-    _env = suite.load(domain_name=args.domain, task_name=args.task, task_kwargs=task_kwargs,  environment_kwargs=environment_kwargs)
-    kwargs = get_kwargs(_env)
-    del _env
-
     if args.domain == 'jaco':
+        task_kwargs = {'xml_name':"jaco_j2s7s300_position.xml", 
+                       'start_position':'home', 
+                       'relative_step':True, 
+                       'target_type':'random',
+                       'physics_type':'mujoco'}
+
+
         if args.fence_name == 'jodesk':
             # .1f is too low - joint 4 hit sometimes!!!!
             task_kwargs['fence'] = {'x':(-.5,.5), 'y':(-1.0, .4), 'z':(.15, 1.2)}
@@ -369,6 +418,12 @@ if __name__ == "__main__":
         else:
             task_kwargs['physics_type'] = 'mujoco'
 
+    _env = suite.load(domain_name=args.domain, task_name=args.task, task_kwargs=task_kwargs,  environment_kwargs=environment_kwargs)
+    kwargs = get_kwargs(_env)
+    del _env
+
+    if args.eval:
+        args.state_pixels = True
     if not args.state_pixels:
         cam_dim = [0,0,0]
     else:
@@ -382,20 +437,17 @@ if __name__ == "__main__":
             cam_dim = [args.frame_height, args.frame_width, 1]
         else:
             cam_dim = [args.frame_height, args.frame_width, 3]
-
     # Set seeds
     torch.manual_seed(args.seed)
     if args.eval_all:
         assert os.path.isdir(args.load_model); print('--load_model must be an experiment directory if --eval_all')
         model_files = sorted(glob(os.path.join(args.load_model, '*.pt')))
         for xx, mf in enumerate(model_files):
-            eval_buffer = mf.replace('.pt', '.epkl')
-            eval_replay_buffer, eval_step_file_path = evaluate(mf)
- 
+            eval_replay_buffer, eval_step_filepath = evaluate(mf)
     elif args.eval:
-        eval_replay_buffer, eval_step_file_path = evaluate(args.load_model)
+        eval_replay_buffer, eval_step_filepath = evaluate(args.load_model)
     else:
-        train(args.load_model)
+        train()
 
 
 

@@ -9,6 +9,7 @@ import time
 import os
 import zlib
 import collections
+import shutil
 
 from dm_control import suite
 from skvideo.io import vwrite
@@ -120,6 +121,8 @@ class ReplayBuffer(object):
         
 def plot_frames(movie_fpath, last_steps, plot_frames=False, plot_action_frames=True, min_action=-.8, max_action=.8, min_reward=-1, max_reward=1):
     st, ac, re, nst, nd, fr, nfr = last_steps
+    if fr.shape[1] == 0:
+        raise ValueError; print("invalid frame shape, run with --state_pixels to ensure frames are rendered")
     n_steps = ac.shape[0]
     if plot_action_frames:
         n_actions = ac.shape[1]
@@ -156,8 +159,9 @@ def plot_frames(movie_fpath, last_steps, plot_frames=False, plot_action_frames=T
         vwrite(movie_fpath, fr)
     if plot_frames:
         dir_path = movie_fpath.replace('.mp4', '')
-        if not os.path.exists(dir_path):
-            os.makedirs(dir_path)
+        if os.path.exists(dir_path):
+            shutil.rmtree(dir_path)
+        os.makedirs(dir_path)
         for n in range(fr.shape[0]):
             f,ax = plt.subplots(1,2)
             ax[0].imshow(fr[n])
@@ -205,6 +209,42 @@ def rolling_average(a, n=5) :
     ret = np.cumsum(a, dtype=float)
     ret[n:] = ret[n:] - ret[:-n]
     return ret[n - 1:] / n
+
+
+
+def plot_states(last_steps, load_model_base, detail_dict):
+    st, ac, re, nst, nd, fr, nfr = last_steps
+    for key, indexer in detail_dict.items():
+        plt.figure()
+        plt.title(key)
+        plt.plot(st[:,indexer])
+        plt.savefig(load_model_base+'_state_%s.png'%(key))
+        plt.xlabel('steps')
+        plt.ylabel(key)
+        plt.close()
+
+def plot_position_actions(last_steps, load_model_base, relative=True):
+    st, actions, re, nst, nd, fr, nfr = last_steps
+    joint_states = st[:,3:10]
+    joint_next_states = nst[:,3:10]
+    for an in range(actions.shape[1]):
+        plt.figure()
+        aname = 'action_%02d'%an
+        plt.title(aname)
+        if relative:
+            plt.plot(actions[:,an], label='cmd rel')
+            cmd_action = actions[:,an]+joint_states[:,an]
+        else:
+            cmd_action = actions[:,an]
+        plt.plot(cmd_action, label='cmd')
+        plt.plot(joint_next_states[:,an], label='next state')
+        error = joint_next_states[:,an] - cmd_action
+        plt.plot(error, label='pos error')
+        plt.legend()
+        plt.savefig(load_model_base+'_action_%02d.png'%(an))
+        plt.xlabel('steps')
+        plt.close()
+
 
 def plot_replay_reward(replay_buffer, load_model_base, start_step=0, name_modifier=''):
     st = np.array(replay_buffer.episode_start_times)
@@ -256,7 +296,6 @@ def plot_replay_reward(replay_buffer, load_model_base, start_step=0, name_modifi
     plt.ylabel('total reward')
     plt.close()
 
-# TODO fix frame
 def test_fake_replay():
     # test replay
     state_dim = 2 
