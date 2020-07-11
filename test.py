@@ -10,7 +10,8 @@ import os
 import sys
 import pickle
 import utils
-from replay_buffer import ReplayBuffer, compress_frame, plot_frames, plot_replay_reward, plot_states, plot_position_actions
+from replay_buffer import ReplayBuffer, compress_frame
+import plotting 
 import time
 from glob import glob
 
@@ -35,17 +36,7 @@ def get_next_frame(frame_env):
         next_frame = compress_frame(next_frame)
     return next_frame
 
-def plot_loss_dict(policy, load_model_base):
-    loss_plot_path = load_model_base + '_loss.png'
-    loss_dict = policy.get_loss_plot_data()
-    plt.figure()
-    for key, val in loss_dict.items():
-        plt.plot(val[0], val[1], label=key)
-    plt.title('Training Loss')
-    plt.legend(loc=2)
-    plt.savefig(loss_plot_path)
-    plt.close()
-    
+   
 def get_state_names_dict():
     plot_environment_kwargs = deepcopy(environment_kwargs)
     plot_environment_kwargs['flat_observation'] = False
@@ -66,7 +57,7 @@ def evaluate(load_model_filepath):
     eval_seed = args.seed+train_step
     task_kwargs['random'] = eval_seed
     load_model_base = loaded_modelpath.replace('.pt', '')
-    plot_loss_dict(policy, load_model_base)
+    plotting.plot_loss_dict(policy, load_model_base)
     # TODO this isn't right - need to track steps in replay really
 
     state_names_dict = get_state_names_dict()
@@ -80,8 +71,8 @@ def evaluate(load_model_filepath):
     if not os.path.exists(train_dir):
         os.makedirs(train_dir)
     train_base = os.path.join(train_dir, get_step_filename(train_step)+'_train')
-    plot_replay_reward(train_replay_buffer, train_base, start_step=train_step, name_modifier='train')
-    plot_states(train_replay_buffer.get_last_steps(train_replay_buffer.size), 
+    plotting.plot_replay_reward(train_replay_buffer, train_base, start_step=train_step, name_modifier='train')
+    plotting.plot_states(train_replay_buffer.get_last_steps(train_replay_buffer.size), 
                 train_base, detail_dict=state_names_dict)
  
 
@@ -89,7 +80,7 @@ def evaluate(load_model_filepath):
     if not os.path.exists(eval_dir):
         os.makedirs(eval_dir)
     print('saving results to dir: {}'.format(eval_dir))
-    eval_base = os.path.join(eval_dir, get_step_filename(train_step)+'_eval{:05d}'.format(eval_seed))
+    eval_base = os.path.join(eval_dir, get_step_filename(train_step)+'_eval_S{:05d}'.format(eval_seed))
 
 
     eval_step_filepath = load_model_base + '.epkl'
@@ -135,23 +126,23 @@ def evaluate(load_model_filepath):
             er = np.int(eval_replay_buffer.episode_rewards[-1])
             epath = eval_base+ '_E{}_R{}'.format(e, er)
             exp = eval_replay_buffer.get_last_steps(num_steps)
-            plot_states(exp, epath, detail_dict=state_names_dict)
+            plotting.plot_states(exp, epath, detail_dict=state_names_dict)
             if args.domain == 'jaco':
-                plot_position_actions(exp, epath, relative=True)
+                plotting.plot_position_actions(exp, epath, relative=True)
             emovie_path = epath+'CAM{}.mp4'.format(e, er, args.camera_view)
-            plot_frames(emovie_path, eval_replay_buffer.get_last_steps(num_steps), plot_action_frames=args.plot_action_movie, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=args.plot_frames)
+            plotting.plot_frames(emovie_path, eval_replay_buffer.get_last_steps(num_steps), plot_action_frames=args.plot_action_movie, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=args.plot_frames)
         # write data files
         print("---------------------------------------")
         eval_replay_buffer.shrink_to_last_step()
         pickle.dump(eval_replay_buffer, open(eval_step_filepath, 'wb'))
 
-    plot_replay_reward(eval_replay_buffer, eval_base, start_step=train_step, name_modifier='eval')
-    plot_states(eval_replay_buffer.get_last_steps(eval_replay_buffer.size), 
+    plotting.plot_replay_reward(eval_replay_buffer, eval_base, start_step=train_step, name_modifier='eval')
+    plotting.plot_states(eval_replay_buffer.get_last_steps(eval_replay_buffer.size), 
                 eval_base, detail_dict=state_names_dict)
 
     if args.plot_movie:
         movie_path = eval_base+'_CAM{}.mp4'.format( args.camera_view)
-        plot_frames(movie_path, eval_replay_buffer.get_last_steps(eval_replay_buffer.size), plot_action_frames=args.plot_action_movie, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=args.plot_frames)
+        plotting.plot_frames(movie_path, eval_replay_buffer.get_last_steps(eval_replay_buffer.size), plot_action_frames=args.plot_action_movie, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=args.plot_frames)
     return eval_replay_buffer, eval_step_filepath
 
 def load_replay_buffer(load_replay_path, load_model_path='', kwargs={}, seed=None):
@@ -403,6 +394,7 @@ if __name__ == "__main__":
         task_kwargs = {'xml_name':"jaco_j2s7s300_position.xml", 
                        'start_position':'home', 
                        'relative_step':True, 
+                       'action_penalty':True,
                        'target_type':'random',
                        'physics_type':'mujoco'}
 
