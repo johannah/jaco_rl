@@ -9,7 +9,8 @@ import os
 import sys
 import pickle
 import utils
-from replay_buffer import ReplayBuffer, compress_frame, plot_frames, plot_replay_reward
+from replay_buffer import ReplayBuffer, compress_frame
+import plotting
 import time
 from glob import glob
 
@@ -148,7 +149,7 @@ def test_mujoco_controllers():
         print("JT TOTAL ERRORS",error_dict)
         done = True
         emovie_path = eval_base_path + '_JT{}_{}_{}.mp4'.format(jt, args.eval_filename_modifier, args.camera_view)
-        plot_frames(emovie_path, eval_replay_buffer.get_last_steps(num_steps), plot_action_frames=True, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=True)
+        plotting.plot_frames(emovie_path, eval_replay_buffer.get_last_steps(num_steps), plot_action_frames=True, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=True)
         pickle.dump(eval_replay_buffer, open(emovie_path.replace('.mp4', '.eepkl'), 'wb'))
     # write data files
     print("---------------------------------------")
@@ -173,7 +174,7 @@ def get_kwargs(env):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", default=0, type=int, help='random seed')
-    parser.add_argument("--target_position", default=[-.8, .6, 1.2], type=list, help='specify target in some tasks')
+    parser.add_argument("--fixed_target_position", default=[-.8, .6, 1.2], type=list, help='specify target in some tasks')
     parser.add_argument("--eval_replay_size", default=int(10000), type=int, help='number of steps to store in replay buffer')
     parser.add_argument("-ne", "--num_eval_episodes", default=1, type=int, help='')
     parser.add_argument("--relative_step", default=.1, type=np.float)
@@ -200,7 +201,9 @@ if __name__ == "__main__":
                    'start_position':'home', 
                    'relative_step':False, 
                    'random':seed, 
-                   'target_position':args.target_position,
+                   'action_penalty':False,
+                   'fixed_target_position':args.fixed_target_position,
+                   'target_type':'fixed',
                    'physics_type':'mujoco'}
 
     cam_dim = [args.frame_height, args.frame_width, 3]

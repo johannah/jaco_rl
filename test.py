@@ -82,8 +82,7 @@ def evaluate(load_model_filepath):
     print('saving results to dir: {}'.format(eval_dir))
     eval_base = os.path.join(eval_dir, get_step_filename(train_step)+'_eval_S{:05d}'.format(eval_seed))
 
-
-    eval_step_filepath = load_model_base + '.epkl'
+    eval_step_filepath = eval_base + '%s.epkl'%args.eval_filename_modifier
     if os.path.exists(eval_step_filepath) and not args.overwrite_replay:
         print('loading existing replay buffer:{}'.format(eval_step_filepath))
         eval_replay_buffer = load_replay_buffer(eval_step_filepath)
@@ -111,6 +110,7 @@ def evaluate(load_model_filepath):
                 next_frame_compressed = get_next_frame(eval_env)
                 done = step_type.last()
                 # Store data in replay buffer
+                embed()
                 eval_replay_buffer.add(state['observations'], action, reward, 
                                   next_state['observations'], done, 
                                   frame_compressed=frame_compressed, 
@@ -121,7 +121,6 @@ def evaluate(load_model_filepath):
                 num_steps+=1
                 time.sleep(.1)
  
-
             # plot episode
             er = np.int(eval_replay_buffer.episode_rewards[-1])
             epath = eval_base+ '_E{}_R{}'.format(e, er)
@@ -129,19 +128,21 @@ def evaluate(load_model_filepath):
             plotting.plot_states(exp, epath, detail_dict=state_names_dict)
             if args.domain == 'jaco':
                 plotting.plot_position_actions(exp, epath, relative=True)
-            emovie_path = epath+'CAM{}.mp4'.format(e, er, args.camera_view)
-            plotting.plot_frames(emovie_path, eval_replay_buffer.get_last_steps(num_steps), plot_action_frames=args.plot_action_movie, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=args.plot_frames)
-        # write data files
+            if np.max([args.plot_movie, args.plot_action_movie, args.plot_frames]):
+                emovie_path = epath+'CAM{}.mp4'.format(e, er, args.camera_view)
+                print('plotting episode: {}'.format(emovie_path))
+                plotting.plot_frames(emovie_path, eval_replay_buffer.get_last_steps(num_steps), plot_action_frames=args.plot_action_movie, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=args.plot_frames)
         print("---------------------------------------")
         eval_replay_buffer.shrink_to_last_step()
         pickle.dump(eval_replay_buffer, open(eval_step_filepath, 'wb'))
 
+    # plot evaluation
     plotting.plot_replay_reward(eval_replay_buffer, eval_base, start_step=train_step, name_modifier='eval')
     plotting.plot_states(eval_replay_buffer.get_last_steps(eval_replay_buffer.size), 
                 eval_base, detail_dict=state_names_dict)
 
-    if args.plot_movie:
-        movie_path = eval_base+'_CAM{}.mp4'.format( args.camera_view)
+    if np.max([args.plot_movie, args.plot_action_movie, args.plot_frames]):
+        movie_path = eval_base+'_CAM{}.mp4'.format(args.camera_view)
         plotting.plot_frames(movie_path, eval_replay_buffer.get_last_steps(eval_replay_buffer.size), plot_action_frames=args.plot_action_movie, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=args.plot_frames)
     return eval_replay_buffer, eval_step_filepath
 
@@ -334,8 +335,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--policy", default="TD3", help='Policy name (TD3, DDPG or OurDDPG)')
-    parser.add_argument("--domain", default="reacher", help='DeepMind Control Suite domain name')
-    parser.add_argument("--task", default="easy", help='Deepmind Control Suite task name')
+    parser.add_argument("--domain", default="jaco", help='DeepMind Control Suite domain name')
+    parser.add_argument("--task", default="relative_position_reacher_7DOF", help='Deepmind Control Suite task name')
     parser.add_argument("--seed", default=0, type=int, help='random seed')
     parser.add_argument("--use_robot", default=False, action='store_true')
     parser.add_argument('-owr', "--overwrite_replay", default=False, action='store_true', help='gather new eval replay experience even if there is already a .pkl file')
@@ -391,14 +392,6 @@ if __name__ == "__main__":
     # info for particular task
     task_kwargs = {}
     if args.domain == 'jaco':
-        task_kwargs = {'xml_name':"jaco_j2s7s300_position.xml", 
-                       'start_position':'home', 
-                       'relative_step':True, 
-                       'action_penalty':True,
-                       'target_type':'random',
-                       'physics_type':'mujoco'}
-
-
         if args.fence_name == 'jodesk':
             # .1f is too low - joint 4 hit sometimes!!!!
             task_kwargs['fence'] = {'x':(-.5,.5), 'y':(-1.0, .4), 'z':(.15, 1.2)}
