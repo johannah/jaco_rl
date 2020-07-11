@@ -30,6 +30,20 @@ def get_next_frame(frame_env):
     next_frame = compress_frame(next_frame)
     return next_frame
 
+def get_state_names_dict():
+    plot_environment_kwargs = deepcopy(environment_kwargs)
+    plot_environment_kwargs['flat_observation'] = False
+    _plot_env = suite.load(domain_name=domain, task_name=task, task_kwargs=task_kwargs,  environment_kwargs=plot_environment_kwargs)
+    plot_spec = _plot_env.observation_spec()
+    del _plot_env; del plot_environment_kwargs
+    state_names_dict = {}
+    st = 0
+    for key in plot_spec.keys():
+        for ind in range(plot_spec[key].shape[0]):
+            state_names_dict[key+'_%02d'%ind] = np.arange(st+ind, st+ind+1)
+        st = st+ind+1
+    return state_names_dict
+
 def test_mujoco_controllers():
     print("starting evaluation for {} episodes".format(args.num_eval_episodes))
     # generate random seed
@@ -66,6 +80,7 @@ def test_mujoco_controllers():
         num_steps = 0
         reward = 0
         base_action = home_joint_angles
+        state_names_dict = get_state_names_dict()
         state_type, reward, discount, state = eval_env.reset()
         frame_compressed = get_next_frame(eval_env)
         obs_angles = deepcopy(state['observations'][3:7+3])
@@ -150,7 +165,12 @@ def test_mujoco_controllers():
         done = True
         emovie_path = eval_base_path + '_JT{}_{}_{}.mp4'.format(jt, args.eval_filename_modifier, args.camera_view)
         plotting.plot_frames(emovie_path, eval_replay_buffer.get_last_steps(num_steps), plot_action_frames=True, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=True)
-        pickle.dump(eval_replay_buffer, open(emovie_path.replace('.mp4', '.eepkl'), 'wb'))
+        ebase = emovie_path.replace('.mp4', '')
+        pickle.dump(eval_replay_buffer, open(ebase+'.epkl', 'wb'))
+        plotting.plot_replay_reward(eval_replay_buffer, ebase, start_step=train_step, name_modifier='train')
+        plotting.plot_states(train_replay_buffer.get_last_steps(eval_replay_buffer.size),
+                 ebase, detail_dict=state_names_dict)
+
     # write data files
     print("---------------------------------------")
     eval_replay_buffer.shrink_to_last_step()
