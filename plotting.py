@@ -2,6 +2,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib import cm
+import os
 import shutil
 from skvideo.io import vwrite
 import shutil
@@ -114,6 +115,15 @@ def rolling_average(a, n=5) :
 
 def plot_states(last_steps, load_model_base, detail_dict):
     st, ac, re, nst, nd, fr, nfr = last_steps
+    plt.figure()
+    plt.title('reward')
+    plt.plot(re)
+    plt.savefig(load_model_base+'_reward.png')
+    plt.xlabel('steps')
+    plt.ylabel('step reward')
+    plt.close()
+
+   
     for key, indexer in detail_dict.items():
         plt.figure()
         plt.title(key)
