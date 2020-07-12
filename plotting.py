@@ -84,12 +84,15 @@ def plot_frames(movie_fpath, last_steps, plot_frames=False, plot_action_frames=T
 
             target_title = 'TAR:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,target][0], st[n,target][1], st[n,target][2]) + '\nTP:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,TP][0], st[n,TP][1], st[n,TP][2]) + '\nS{}DISx{:.2f}y{:.2f}z{:.2f}'.format(n, st[n,TDIS][0], st[n,TDIS][0], st[n,TDIS][0])
 
-            exjt_title = 'DHj4:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,DH4][0], st[n,DH4][1], st[n,DH4][2]) +'\nDHj6:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,DH6][0], st[n,DH6][1], st[n,DH6][2]) +'\nTP:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,DHTP][0], st[n,DHTP][1], st[n,DHTP][2])
-
-            muj_title = '\nmujj4:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,J4][0], st[n,J4][1], st[n,J4][2]) + '\nmujj6:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,J6][0], st[n,J6][1], st[n,J6][2]) +'\nmujTP:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,fing][0], st[n,fing][1], st[n,fing][2])
+            dh4 =  'Dj4:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,DH4][0], st[n,DH4][1], st[n,DH4][2]) 
+            dh6 =  'Dj6:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,DH6][0], st[n,DH6][1], st[n,DH6][2])            
+            dhTP = 'DT :x{:.2f}y{:.2f}z{:.2f}'.format(st[n,DHTP][0], st[n,DHTP][1], st[n,DHTP][2])
+            m4 =   'mj4:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,J4][0], st[n,J4][1], st[n,J4][2])
+            m6 =   'mj6:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,J6][0], st[n,J6][1], st[n,J6][2]) 
+            mTP =  'mTP:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,fing][0], st[n,fing][1], st[n,fing][2])
 
             ax[0].set_title(target_title)
-            ax[1].set_title(exjt_title+muj_title)
+            ax[1].set_title(dh4+'\n'+m4+'\n'+dh6+'\n'+m6+'\n'+dhTP+'\n'+mTP)
             #ax[1].set_title(nst_title+"S:%s R:%s"%(n,re[n]))
             img_path = os.path.join(dir_path, 'frame_%05d.png'%n)
             if not n %20:
