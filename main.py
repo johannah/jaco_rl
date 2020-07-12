@@ -124,6 +124,7 @@ def evaluate(load_model_filepath):
                                       plot_action_frames=args.plot_action_movie,
                                        min_action=-kwargs['max_action'], max_action=kwargs['max_action'], 
                                      plot_frames=args.plot_frames)
+            embed()
         print("---------------------------------------")
         eval_replay_buffer.shrink_to_last_step()
         pickle.dump(eval_replay_buffer, open(eval_step_filepath, 'wb'))

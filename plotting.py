@@ -69,13 +69,13 @@ def plot_frames(movie_fpath, last_steps, plot_frames=False, plot_action_frames=T
             f,ax = plt.subplots(1,2)
             ax[0].imshow(fr[n])
             ax[1].imshow(nfr[n])
-            exjt_title = 'J4:'
+            exjt_title = 'DH4:'
             for xn, ej in enumerate(st[n][-9:]):
                 exjt_title += ' %.02f'%ej
                 if  xn ==2:
-                    exjt_title += '\nJ6:' 
+                    exjt_title += '\nDH6:' 
                 if  xn ==5:
-                    exjt_title += '\nJ7:' 
+                    exjt_title += '\nTP:' 
             exjt_title += '\n' 
  
             action_title = 'A'
@@ -95,8 +95,8 @@ def plot_frames(movie_fpath, last_steps, plot_frames=False, plot_action_frames=T
                     nst_title += '\n' 
  
             ax[0].set_title(st_title+action_title)
-            #ax[1].set_title(exjt_title+"S:%s R:%s"%(n,re[n]))
-            ax[1].set_title(nst_title+"S:%s R:%s"%(n,re[n]))
+            ax[1].set_title(exjt_title+"S:%s R:%s"%(n,re[n]))
+            #ax[1].set_title(nst_title+"S:%s R:%s"%(n,re[n]))
             img_path = os.path.join(dir_path, 'frame_%05d.png'%n)
             if not n %20:
                 print('writing', img_path)
