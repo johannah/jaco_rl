@@ -1,9 +1,6 @@
 # RL on Jaco Arm in DeepMind Control Suite
-This repository implements [TD3](https://arxiv.org/abs/1802.09477) and 
-[DDPG](https://arxiv.org/abs/1509.02971) on DeepMind Control Suite tasks. 
-
-* This repository needs the `jaco_arm` branch of `dm_control` forked 
-[here](https://github.com/sahandrez/dm_control/tree/jaco_arm). 
+This repository provides the tools to train a Jaco arm with dm_control. It depends on a dm_control repository. 
+[here](https://github.com/johannah/jaco). 
 * The agent implementations are taken from the [Official TD3 repository](https://github.com/sfujim/TD3).
 
 

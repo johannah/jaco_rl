@@ -122,7 +122,6 @@ def plot_states(last_steps, load_model_base, detail_dict):
     plt.xlabel('steps')
     plt.ylabel('step reward')
     plt.close()
-
    
     for key, indexer in detail_dict.items():
         plt.figure()
@@ -135,31 +134,26 @@ def plot_states(last_steps, load_model_base, detail_dict):
 
 def plot_position_actions(last_steps, load_model_base, relative=True):
     # only works for jaco
-    lw = 6
     st, actions, re, nst, nd, fr, nfr = last_steps
-    joint_states = st[:,3:10]
-    joint_next_states = nst[:,3:10]
+    joint_states = st[:,3:3+13]
+    joint_next_states = nst[:,3:3+13]
     for an in range(actions.shape[1]):
         plt.figure()
         aname = 'action_%02d'%an
         plt.title(aname)
         if relative:
-            plt.plot(actions[:,an], label='cmd rel', lw=lw)
-            lw-=1
+            plt.plot(actions[:,an], label='cmd rel', lw=3)
             cmd_action = actions[:,an]+joint_states[:,an]
         else:
             cmd_action = actions[:,an]
-        plt.plot(cmd_action, label='cmd', lw=lw)
-        lw-=1
-        plt.plot(joint_next_states[:,an], label='next state', lw=lw)
-        lw-=1
+        plt.plot(cmd_action, label='cmd', lw=2.5)
+        plt.plot(joint_next_states[:,an], label='next state', lw=2)
         error = joint_next_states[:,an] - cmd_action
-        plt.plot(error, label='pos error', lw=lw)
+        plt.plot(error, label='pos error', lw=1.5)
         plt.legend()
         plt.savefig(load_model_base+'_action_%02d.png'%(an))
         plt.xlabel('steps')
         plt.close()
-
 
 def plot_replay_reward(replay_buffer, load_model_base, start_step=0, name_modifier=''):
     st = np.array(replay_buffer.episode_start_times)

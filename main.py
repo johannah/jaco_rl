@@ -364,6 +364,9 @@ if __name__ == "__main__":
         parser.print_help()
         sys.exit(0)
 
+    if args.eval or args.eval_all:
+        if args.load_model == "" and args.load_replay == "":
+            raise ValueError; print("--load_model or --load_replay required to evaluate")
     environment_kwargs = {'flat_observation':True}
 
     num_steps = 0

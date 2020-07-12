@@ -59,32 +59,28 @@ def test_mujoco_controllers():
     eval_replay_buffer = ReplayBuffer(kwargs['state_dim'], kwargs['action_dim'], 
                                  max_size=int(args.eval_replay_size), 
                                  cam_dim=cam_dim, seed=seed)
-    home_joint_angles =  [4.92,  # 283 deg
+    home_joint_angles =  np.array([4.92,  # 283 deg
                          2.839, # 162.709854126
                          0,     # 0
                          .758,  # 43.43
                          4.6366,  # 265.66
                          4.493,   # 257.47
                          5.0249, # 287.9
-                         10, 10, 10, 10, 10, 10]
+                         0., 0., 0., 0., 0., 0.])
     
-    amins = eval_env.action_spec().minimum
-    amaxes = eval_env.action_spec().maximum
     #for e in range(args.num_eval_episodes)
     print(amins)
     print(amaxes)
     error_dict = {}
-    for jt in range(0,7):
+    for jt in range(0,13):
         error_dict[jt] = 0
         done = False
         num_steps = 0
         reward = 0
-        base_action = home_joint_angles
         state_names_dict = get_state_names_dict()
         state_type, reward, discount, state = eval_env.reset()
         frame_compressed = get_next_frame(eval_env)
-        obs_angles = deepcopy(state['observations'][3:7+3])
-        last_action = obs_angles
+        obs_angles = deepcopy(state['observations'][3:13+3])
         total_errors = 0
         # WHAT I KNOW
         # if I dont step, nothing changes
@@ -116,45 +112,52 @@ def test_mujoco_controllers():
 
         """
         direction = 1
+        action = np.zeros(13)
+        obs_angles = deepcopy(state['observations'][3:13+3])
         for num_steps in range(200):
             if not done:
-                # IT IS necessary to make a copy of observations because mujoco will use the reference 
-                action = deepcopy(home_joint_angles[:7])
-                #if obs_angles[jt] > 1.6:
-                #if last_action[jt] >= amaxes[jt]-.5:
-                #    action[jt] = last_action[jt]-relative_step
-                #else:
-                if last_action[jt] < .8*amins[jt]:
+                if obs_angles[jt]-(2*args.relative_step_size) <= amins[jt]:
                     direction = 1
-                    print("direction", direction, last_action[jt], amins[jt], amaxes[jt])
-                if last_action[jt] > .8*amaxes[jt]:
+                    print("direction", direction, action[jt], amins[jt], amaxes[jt])
+                if obs_angles[jt]+(2*args.relative_step_size) >= amaxes[jt]:
                     direction = -1
-                    print("direction", direction, last_action[jt], amins[jt], amaxes[jt])
+                    print("direction", direction, action[jt], amins[jt], amaxes[jt])
 
-                action[jt] = last_action[jt]+(args.relative_step*direction)
-
-                base_action[:7] = action
+                # turn hand so it is easier to see for finger moves
+                if jt == 4:
+                    if num_steps < 10:
+                        action[3] = .1
+                    else:
+                        action[3] = 0.0
+ 
+                if jt > 6:
+                    if num_steps < 10:
+                        action[5] = -.1
+                    else:
+                        action[5] = 0.0
+                action[jt] = args.relative_step_size*direction
+                #base_action[:7] = action
                 print('JT{}N{}A'.format(jt,num_steps),action)
                 reward = 0
                 # Perform action
-                step_type, _, discount, next_state = eval_env.step(base_action)
-                obs_angles = deepcopy(next_state['observations'][3:7+3])
+                step_type, _, discount, next_state = eval_env.step(action)
+                last_obs_angles = deepcopy(state['observations'][3:13+3])
+                obs_angles = deepcopy(next_state['observations'][3:13+3])
                 print('JT{}N{}O'.format(jt,num_steps),obs_angles)
 
-                error = obs_angles-action
+                error = (last_obs_angles+action)-obs_angles
                 abs_error = np.abs(error)
                 if np.max(abs_error) > .1:
-                    print("----ERROR", np.argmax(abs_error), error)
+                    print("----ERROR", error)
                     error_dict[jt]+=1
                     reward = -1
 
-                last_action = action
                 next_frame_compressed = get_next_frame(eval_env)
                 done = step_type.last()
                 # Store data in replay buffer
 
-                eval_replay_buffer.add(state['observations'][:51], action[:7], reward, 
-                        next_state['observations'][:51], done, 
+                eval_replay_buffer.add(state['observations'], action, reward, 
+                        next_state['observations'], done, 
                         frame_compressed=frame_compressed, 
                         next_frame_compressed=next_frame_compressed)
 
@@ -162,25 +165,32 @@ def test_mujoco_controllers():
                 state = next_state
 
         print("JT TOTAL ERRORS",error_dict)
+        last_steps = eval_replay_buffer.get_last_steps(num_steps)
         done = True
-        emovie_path = eval_base_path + '_JT{}_{}_{}.mp4'.format(jt, args.eval_filename_modifier, args.camera_view)
-        plotting.plot_frames(emovie_path, eval_replay_buffer.get_last_steps(num_steps), plot_action_frames=True, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=True)
+
+        emovie_path = eval_base_path + '_JT%02d_%s_%s.mp4'%(jt, args.eval_filename_modifier, args.camera_view)
         ebase = emovie_path.replace('.mp4', '')
+
+        plotting.plot_states(last_steps, ebase, detail_dict=state_names_dict)
+        plotting.plot_position_actions(last_steps, ebase, relative=True)
+        plotting.plot_frames(emovie_path, eval_replay_buffer.get_last_steps(num_steps), plot_action_frames=True, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=False)
         pickle.dump(eval_replay_buffer, open(ebase+'.epkl', 'wb'))
-        plotting.plot_replay_reward(eval_replay_buffer, ebase, start_step=train_step, name_modifier='train')
-        plotting.plot_states(train_replay_buffer.get_last_steps(eval_replay_buffer.size),
-                 ebase, detail_dict=state_names_dict)
+        plotting.plot_replay_reward(eval_replay_buffer, ebase, start_step=0, name_modifier='train')
+
 
     # write data files
     print("---------------------------------------")
     eval_replay_buffer.shrink_to_last_step()
     pickle.dump(eval_replay_buffer, open(eval_step_file_path, 'wb'))
     print("JT TOTAL ERRORS",error_dict)
+
+    movie_path = eval_base_path + '_%s_%s.mp4'%(args.eval_filename_modifier,args.camera_view)
+    plotting.plot_frames(movie_path, eval_replay_buffer.get_last_steps(eval_replay_buffer.size), plot_action_frames=True, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=False)
+
     return eval_replay_buffer, eval_step_file_path
 
 def get_kwargs(env):
-    #state_dim = env.observation_spec()['observations'].shape[0]
-    state_dim = 51
+    state_dim = env.observation_spec()['observations'].shape[0]
     action_dim = env.action_spec().shape[0]
     min_action = float(env.action_spec().minimum[0])
     max_action = float(env.action_spec().maximum[0])
@@ -197,11 +207,12 @@ if __name__ == "__main__":
     parser.add_argument("--fixed_target_position", default=[-.8, .6, 1.2], type=list, help='specify target in some tasks')
     parser.add_argument("--eval_replay_size", default=int(10000), type=int, help='number of steps to store in replay buffer')
     parser.add_argument("-ne", "--num_eval_episodes", default=1, type=int, help='')
-    parser.add_argument("--relative_step", default=.1, type=np.float)
+    parser.add_argument("--relative_step", default=True, type=bool)
+    parser.add_argument("--relative_step_size", default=.04, type=np.float)
     parser.add_argument("--frame_height", default=400)
     parser.add_argument("--frame_width", default=480)
     #parser.add_argument("--time_limit", default=10)                 # Time in seconds allowed to complete mujoco task
-    parser.add_argument('-cv', '--camera_view', default='topview', help='camera view to use.') 
+    parser.add_argument('-cv', '--camera_view', default=-1, help='camera view to use.') 
     parser.add_argument('-efm', '--eval_filename_modifier', default='_robot')
     parser.add_argument('-fn', '--fence_name', default='jodesk', help='virtual fence name that prevents jaco from leaving this region.')   # use gpu rather than cpu for computation
     parser.add_argument("--exp_name", default="pos_test")               
@@ -212,16 +223,25 @@ if __name__ == "__main__":
     environment_kwargs = {'flat_observation':True}
     domain = 'jaco'
     task = 'configurable_reacher'
-    #task = 'relative_reacher_easy'
 
+    # need to figure out min/max of all joints
+    joint_env = suite.load(domain_name=domain, task_name=task, 
+                      task_kwargs={'relative_step':False,
+                                   'degrees_of_freedom':13},  
+                      environment_kwargs=environment_kwargs)
+
+    amins = joint_env.action_spec().minimum
+    amaxes = joint_env.action_spec().maximum
+
+    task_kwargs = {}
     num_steps = 0
     file_name = "{}".format(args.exp_name)
     seed = args.seed
-    task_kwargs = {'xml_name':"jaco_j2s7s300_position.xml", 
-                   'start_position':'home', 
-                   'relative_step':False, 
+    task_kwargs = {
+                   'relative_step':True, 
                    'random':seed, 
                    'action_penalty':False,
+                   'degrees_of_freedom':13,
                    'fixed_target_position':args.fixed_target_position,
                    'target_type':'fixed',
                    'physics_type':'mujoco'}
@@ -232,7 +252,6 @@ if __name__ == "__main__":
         task_kwargs['fence'] = {'x':(-.5,.5), 'y':(-1.0, .4), 'z':(.15, 1.2)}
     else:
         task_kwargs['fence'] = {'x':(-5,5), 'y':(-5, 5), 'z':(.15, 1.2)}
-
 
 
     _env = suite.load(domain_name=domain, task_name=task, task_kwargs=task_kwargs,  environment_kwargs=environment_kwargs)
