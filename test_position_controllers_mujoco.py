@@ -40,7 +40,10 @@ def get_state_names_dict():
     st = 0
     for key in plot_spec.keys():
         for ind in range(plot_spec[key].shape[0]):
-            state_names_dict[key+'_%02d'%ind] = np.arange(st+ind, st+ind+1)
+            if len(plot_spec[key].shape) == 1:
+                state_names_dict[key+'_%02d'%ind] = np.arange(st+ind, st+ind+1)
+            else:
+                state_names_dict[key+'_%02d'%ind] = np.arange(st+ind, st+ind+plot_spec[key].shape[1])
         st = st+ind+1
     return state_names_dict
 

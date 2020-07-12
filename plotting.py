@@ -121,6 +121,7 @@ def plot_states(last_steps, load_model_base, detail_dict):
     plt.close()
    
     for key, indexer in detail_dict.items():
+        plt.plot(st[:,indexer])
         plt.figure()
         plt.title(key)
         plt.plot(st[:,indexer])
