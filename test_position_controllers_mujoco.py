@@ -173,7 +173,7 @@ def test_mujoco_controllers():
 
         plotting.plot_states(last_steps, ebase, detail_dict=state_names_dict)
         plotting.plot_position_actions(last_steps, ebase, relative=True)
-        plotting.plot_frames(emovie_path, eval_replay_buffer.get_last_steps(num_steps), plot_action_frames=True, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=False)
+        plotting.plot_frames(emovie_path, eval_replay_buffer.get_last_steps(num_steps), plot_action_frames=True, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=True)
         pickle.dump(eval_replay_buffer, open(ebase+'.epkl', 'wb'))
         plotting.plot_replay_reward(eval_replay_buffer, ebase, start_step=0, name_modifier='train')
 
@@ -220,6 +220,8 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     results_dir = os.path.join(args.savedir, args.exp_name)
+    if not os.path.exists(results_dir):
+        os.makedirs(results_dir)
     environment_kwargs = {'flat_observation':True}
     domain = 'jaco'
     task = 'configurable_reacher'

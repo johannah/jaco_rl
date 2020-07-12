@@ -65,37 +65,31 @@ def plot_frames(movie_fpath, last_steps, plot_frames=False, plot_action_frames=T
         if os.path.exists(dir_path):
             shutil.rmtree(dir_path)
         os.makedirs(dir_path)
+        init = 3 + 13+13+13
+        TDIS = np.arange(0,3)
+        DH4 = np.arange(init, init+3)
+        DH6 = np.arange(init+3, init+3+3)
+        DHTP = np.arange(init+3+3, init+3+3+3)
+        TP = np.arange(init+3+3+3, init+3+3+3+3)
+        minit = init+3+3+3+3
+        J4 = np.arange(minit, minit+3)
+        J6 = np.arange(minit+3, minit+3+3)
+        fing = np.arange(minit+3+3, minit+3+3+3)
+        target = np.arange(minit+3+3+3, minit+3+3+3+3)
+        
         for n in range(fr.shape[0]):
             f,ax = plt.subplots(1,2)
             ax[0].imshow(fr[n])
             ax[1].imshow(nfr[n])
-            exjt_title = 'DH4:'
-            for xn, ej in enumerate(st[n][-9:]):
-                exjt_title += ' %.02f'%ej
-                if  xn ==2:
-                    exjt_title += '\nDH6:' 
-                if  xn ==5:
-                    exjt_title += '\nTP:' 
-            exjt_title += '\n' 
- 
-            action_title = 'A'
-            for xn, a in enumerate(ac[n]):
-                action_title += ' %.02f'%a
-                if not xn%3:
-                    action_title += '\n' 
-            st_title = 'ST'
-            for xn, o in enumerate(st[n,3:10]):
-                st_title += ' %.02f'%o
-                if not xn%3:
-                    st_title += '\n' 
-            nst_title = 'NST'
-            for xn, o in enumerate(nst[n,3:10]):
-                nst_title += ' %.02f'%o
-                if not xn%3:
-                    nst_title += '\n' 
- 
-            ax[0].set_title(st_title+action_title)
-            ax[1].set_title(exjt_title+"S:%s R:%s"%(n,re[n]))
+
+            target_title = 'TAR:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,target][0], st[n,target][1], st[n,target][2]) + '\nTP:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,TP][0], st[n,TP][1], st[n,TP][2]) + '\nS{}DISx{:.2f}y{:.2f}z{:.2f}'.format(n, st[n,TDIS][0], st[n,TDIS][0], st[n,TDIS][0])
+
+            exjt_title = 'DHj4:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,DH4][0], st[n,DH4][1], st[n,DH4][2]) +'\nDHj6:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,DH6][0], st[n,DH6][1], st[n,DH6][2]) +'\nTP:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,DHTP][0], st[n,DHTP][1], st[n,DHTP][2])
+
+            muj_title = '\nmujj4:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,J4][0], st[n,J4][1], st[n,J4][2]) + '\nmujj6:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,J6][0], st[n,J6][1], st[n,J6][2]) +'\nmujTP:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,fing][0], st[n,fing][1], st[n,fing][2])
+
+            ax[0].set_title(target_title)
+            ax[1].set_title(exjt_title+muj_title)
             #ax[1].set_title(nst_title+"S:%s R:%s"%(n,re[n]))
             img_path = os.path.join(dir_path, 'frame_%05d.png'%n)
             if not n %20:
