@@ -117,55 +117,57 @@ def test_mujoco_controllers():
         direction = 1
         action = np.zeros(13)
         obs_angles = deepcopy(state['observations'][3:13+3])
-        for num_steps in range(200):
-            if not done:
-                if obs_angles[jt]-(2*args.relative_step_size) <= amins[jt]:
-                    direction = 1
-                    print("direction", direction, action[jt], amins[jt], amaxes[jt])
-                if obs_angles[jt]+(2*args.relative_step_size) >= amaxes[jt]:
-                    direction = -1
-                    print("direction", direction, action[jt], amins[jt], amaxes[jt])
+        num_steps = 0
+        done = False
+        while not done:
+            if obs_angles[jt]-(2*args.relative_step_size) <= amins[jt]:
+                direction = 1
+                print("direction", direction, action[jt], amins[jt], amaxes[jt])
+            if obs_angles[jt]+(2*args.relative_step_size) >= amaxes[jt]:
+                direction = -1
+                print("direction", direction, action[jt], amins[jt], amaxes[jt])
 
-                # turn hand so it is easier to see for finger moves
-                if jt == 4:
-                    if num_steps < 10:
-                        action[3] = .1
-                    else:
-                        action[3] = 0.0
+            # turn hand so it is easier to see for finger moves
+            if jt == 4:
+                if num_steps < 10:
+                    action[3] = .1
+                else:
+                    action[3] = 0.0
  
-                if jt > 6:
-                    if num_steps < 10:
-                        action[5] = -.1
-                    else:
-                        action[5] = 0.0
-                action[jt] = args.relative_step_size*direction
-                #base_action[:7] = action
-                print('JT{}N{}A'.format(jt,num_steps),action)
-                reward = 0
-                # Perform action
-                step_type, _, discount, next_state = eval_env.step(action)
-                last_obs_angles = deepcopy(state['observations'][3:13+3])
-                obs_angles = deepcopy(next_state['observations'][3:13+3])
-                print('JT{}N{}O'.format(jt,num_steps),obs_angles)
+            if jt > 6:
+                if num_steps < 10:
+                    action[5] = -.1
+                else:
+                    action[5] = 0.0
+            action[jt] = args.relative_step_size*direction
+            #base_action[:7] = action
+            print('JT{}N{}A'.format(jt,num_steps),action)
+            reward = 0
+            # Perform action
+            step_type, _, discount, next_state = eval_env.step(action)
+            last_obs_angles = deepcopy(state['observations'][3:13+3])
+            obs_angles = deepcopy(next_state['observations'][3:13+3])
+            print('JT{}N{}O'.format(jt,num_steps),obs_angles)
 
-                error = (last_obs_angles+action)-obs_angles
-                abs_error = np.abs(error)
-                if np.max(abs_error) > .1:
-                    print("----ERROR", error)
-                    error_dict[jt]+=1
-                    reward = -1
+            error = (last_obs_angles+action)-obs_angles
+            abs_error = np.abs(error)
+            if np.max(abs_error) > .1:
+                print("----ERROR", error)
+                error_dict[jt]+=1
+                reward = -1
 
-                next_frame_compressed = get_next_frame(eval_env)
-                done = step_type.last()
-                # Store data in replay buffer
+            next_frame_compressed = get_next_frame(eval_env)
+            done = step_type.last()
+            # Store data in replay buffer
 
-                eval_replay_buffer.add(state['observations'], action, reward, 
-                        next_state['observations'], done, 
-                        frame_compressed=frame_compressed, 
-                        next_frame_compressed=next_frame_compressed)
+            eval_replay_buffer.add(state['observations'], action, reward, 
+                    next_state['observations'], done, 
+                    frame_compressed=frame_compressed, 
+                    next_frame_compressed=next_frame_compressed)
 
-                frame_compressed = next_frame_compressed
-                state = next_state
+            frame_compressed = next_frame_compressed
+            state = next_state
+            num_steps +=1
 
         print("JT TOTAL ERRORS",error_dict)
         last_steps = eval_replay_buffer.get_last_steps(num_steps)
@@ -211,7 +213,8 @@ if __name__ == "__main__":
     parser.add_argument("--eval_replay_size", default=int(10000), type=int, help='number of steps to store in replay buffer')
     parser.add_argument("-ne", "--num_eval_episodes", default=1, type=int, help='')
     parser.add_argument("--relative_step", default=True, type=bool)
-    parser.add_argument("--relative_step_size", default=.04, type=np.float)
+    parser.add_argument("--relative_step_size", default=.05, type=np.float)
+    parser.add_argument("--episode_timelimit", default=30, type=np.float)
     parser.add_argument("--frame_height", default=400)
     parser.add_argument("--frame_width", default=480)
     #parser.add_argument("--time_limit", default=10)                 # Time in seconds allowed to complete mujoco task
@@ -249,7 +252,8 @@ if __name__ == "__main__":
                    'degrees_of_freedom':13,
                    'fixed_target_position':args.fixed_target_position,
                    'target_type':'fixed',
-                   'physics_type':'mujoco'}
+                   'physics_type':'mujoco', 
+                    'episode_timelimit':args.episode_timelimit}
 
     cam_dim = [args.frame_height, args.frame_width, 3]
     if args.fence_name == 'jodesk':
