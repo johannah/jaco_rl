@@ -65,34 +65,42 @@ def plot_frames(movie_fpath, last_steps, plot_frames=False, plot_action_frames=T
         if os.path.exists(dir_path):
             shutil.rmtree(dir_path)
         os.makedirs(dir_path)
-        init = 3 + 13+13+13
         TDIS = np.arange(0,3)
-        DH4 = np.arange(init, init+3)
-        DH6 = np.arange(init+3, init+3+3)
-        DHTP = np.arange(init+3+3, init+3+3+3)
-        TP = np.arange(init+3+3+3, init+3+3+3+3)
-        minit = init+3+3+3+3
+        init = 3 + 13+13+13
+        DH1 = np.arange(init,              init+3)
+        DH2 = np.arange(init+3,            init+3+3)
+        DH3 = np.arange(init+3+3,          init+3+3+3)
+        DH4 = np.arange(init+3+3+3,        init+3+3+3+3) 
+        DH5 = np.arange(init+3+3+3+3,      init+3+3+3+3+3) 
+        DH6 = np.arange(init+3+3+3+3+3,    init+3+3+3+3+3+3) 
+        DH7 = np.arange(init+3+3+3+3+3+3,  init+3+3+3+3+3+3+3) 
+        TP = np.arange(init+(3*7), init+(3*7)+3)
+        minit = init+(3*7)+3
         J4 = np.arange(minit, minit+3)
         J6 = np.arange(minit+3, minit+3+3)
         fing = np.arange(minit+3+3, minit+3+3+3)
         target = np.arange(minit+3+3+3, minit+3+3+3+3)
-        
         for n in range(fr.shape[0]):
-            f,ax = plt.subplots(1,2)
+            f,ax = plt.subplots(1,2, figsize=(14,10))
             ax[0].imshow(fr[n])
             ax[1].imshow(nfr[n])
 
-            target_title = 'TAR:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,target][0], st[n,target][1], st[n,target][2]) + '\nTP:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,TP][0], st[n,TP][1], st[n,TP][2]) + '\nS{}DISx{:.2f}y{:.2f}z{:.2f}'.format(n, st[n,TDIS][0], st[n,TDIS][0], st[n,TDIS][0])
+            target_title = 'TAR:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,target][0], st[n,target][1], st[n,target][2]) +  '\nS{}DISx{:.2f}y{:.2f}z{:.2f}'.format(n, st[n,TDIS][0], st[n,TDIS][0], st[n,TDIS][0])
 
-            dh4 =  'Dj4:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,DH4][0], st[n,DH4][1], st[n,DH4][2]) 
+            act_title = ",".join(["{:.1f}".format(av) for av in ac[n][:7]])
+            dh1 =  'Dj1:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,DH1][0], st[n,DH1][1], st[n,DH1][2]) 
+            dh2 =  'Dj2:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,DH2][0], st[n,DH2][1], st[n,DH2][2]) 
+            dh3 =  'Dj3:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,DH3][0], st[n,DH3][1], st[n,DH3][2]) 
+            dh4 =  'Dj4:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,DH4][0], st[n,DH4][1], st[n,DH4][2])            
+            dh5 =  'Dj5:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,DH5][0], st[n,DH5][1], st[n,DH5][2])            
             dh6 =  'Dj6:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,DH6][0], st[n,DH6][1], st[n,DH6][2])            
-            dhTP = 'DT :x{:.2f}y{:.2f}z{:.2f}'.format(st[n,DHTP][0], st[n,DHTP][1], st[n,DHTP][2])
+            dh7 =  'Dj7:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,DH7][0], st[n,DH7][1], st[n,DH7][2])            
             m4 =   'mj4:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,J4][0], st[n,J4][1], st[n,J4][2])
             m6 =   'mj6:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,J6][0], st[n,J6][1], st[n,J6][2]) 
-            mTP =  'mTP:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,fing][0], st[n,fing][1], st[n,fing][2])
+            mfing= 'mfi:x{:.2f}y{:.2f}z{:.2f}'.format(st[n,fing][0], st[n,fing][1], st[n,fing][2])
 
-            ax[0].set_title(target_title)
-            ax[1].set_title(dh4+'\n'+m4+'\n'+dh6+'\n'+m6+'\n'+dhTP+'\n'+mTP)
+            ax[0].set_title(target_title+'\n'+act_title)
+            ax[1].set_title(dh1+'\n'+dh2+'\n'+dh3+'\n'+dh4+'\n'+dh5+'\n'+dh6+'\n'+dh7+'\n'+m4+'\n'+m6+'\n'+mfing)
             #ax[1].set_title(nst_title+"S:%s R:%s"%(n,re[n]))
             img_path = os.path.join(dir_path, 'frame_%05d.png'%n)
             if not n %20:

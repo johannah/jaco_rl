@@ -47,31 +47,105 @@ def get_state_names_dict():
         st = st+ind+1
     return state_names_dict
 
-def test_mujoco_controllers():
+def test_mujoco_controllers_absolute_step():
     print("starting evaluation for {} episodes".format(args.num_eval_episodes))
     # generate random seed
 
-    eval_base_path = os.path.join(results_dir, '_relstep%s_tc%s'%(args.relative_step, args.eval_filename_modifier))
+    eval_base_path = os.path.join(results_dir, '_absstep%s_tc%s'%(args.relative_step_size, args.eval_filename_modifier))
     eval_step_file_path = eval_base_path+'.cpkl' 
-    #if os.path.exists(eval_step_file_path):
-    #    print('loading existing replay buffer:{}'.format(eval_step_file_path))
-    #    eval_replay_buffer = load_replay_buffer(eval_step_file_path)
-    #else:
     eval_env = suite.load(domain_name=domain, task_name=task, task_kwargs=task_kwargs,  environment_kwargs=environment_kwargs)
     print("CREATING REPLAY eval", cam_dim)
     eval_replay_buffer = ReplayBuffer(kwargs['state_dim'], kwargs['action_dim'], 
                                  max_size=int(args.eval_replay_size), 
                                  cam_dim=cam_dim, seed=seed)
-    home_joint_angles =  np.array([4.92,  # 283 deg
-                         2.839, # 162.709854126
-                         0,     # 0
-                         .758,  # 43.43
-                         4.6366,  # 265.66
-                         4.493,   # 257.47
-                         5.0249, # 287.9
-                         0., 0., 0., 0., 0., 0.])
-    
-    #for e in range(args.num_eval_episodes)
+   
+    error_dict = {}
+    for jt in range(0,13):
+        error_dict[jt] = 0
+        done = False
+        num_steps = 0
+        reward = 0
+        state_names_dict = get_state_names_dict()
+        state_type, reward, discount, state = eval_env.reset()
+        frame_compressed = get_next_frame(eval_env)
+        obs_angles = deepcopy(state['observations'][3:13+3])
+        total_errors = 0
+        direction = 1
+        obs_angles = deepcopy(state['observations'][3:13+3])
+        action = deepcopy(obs_angles)
+          
+        num_steps = 0
+        done = False
+        while not done:
+            if obs_angles[jt]-(2*args.relative_step_size) <= amins[jt]:
+                direction = 1
+                print("direction", direction, action[jt], amins[jt], amaxes[jt])
+            if obs_angles[jt]+(2*args.relative_step_size) >= amaxes[jt]:
+                direction = -1
+                print("direction", direction, action[jt], amins[jt], amaxes[jt])
+            action[jt] = obs_angles[jt] + args.relative_step_size*direction
+            print('JT{}N{}A'.format(jt,num_steps),action)
+            reward = 0
+            # Perform action
+            step_type, _, discount, next_state = eval_env.step(action)
+            last_obs_angles = deepcopy(state['observations'][3:13+3])
+            obs_angles = deepcopy(next_state['observations'][3:13+3])
+            print('JT{}N{}O'.format(jt,num_steps),obs_angles)
+
+            error = (last_obs_angles+action)-obs_angles
+            abs_error = np.abs(error)
+            if np.max(abs_error) > .1:
+                print("----ERROR", error)
+                error_dict[jt]+=1
+                reward = -1
+
+            next_frame_compressed = get_next_frame(eval_env)
+            done = step_type.last()
+            # Store data in replay buffer
+
+            eval_replay_buffer.add(state['observations'], action, reward, 
+                    next_state['observations'], done, 
+                    frame_compressed=frame_compressed, 
+                    next_frame_compressed=next_frame_compressed)
+
+            frame_compressed = next_frame_compressed
+            state = next_state
+            num_steps +=1
+
+        print("JT TOTAL ERRORS",error_dict)
+        last_steps = eval_replay_buffer.get_last_steps(num_steps)
+        done = True
+
+        emovie_path = eval_base_path + '_JT%02d_%s_%s.mp4'%(jt, args.eval_filename_modifier, args.camera_view)
+        ebase = emovie_path.replace('.mp4', '')
+
+        plotting.plot_states(last_steps, ebase, detail_dict=state_names_dict)
+        plotting.plot_position_actions(last_steps, ebase, relative=args.relative_step)
+        plotting.plot_frames(emovie_path, eval_replay_buffer.get_last_steps(num_steps), plot_action_frames=True, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=True)
+        pickle.dump(eval_replay_buffer, open(ebase+'.epkl', 'wb'))
+        plotting.plot_replay_reward(eval_replay_buffer, ebase, start_step=0, name_modifier='train')
+
+
+    # write data files
+    print("---------------------------------------")
+    eval_replay_buffer.shrink_to_last_step()
+    pickle.dump(eval_replay_buffer, open(eval_step_file_path, 'wb'))
+    print("JT TOTAL ERRORS",error_dict)
+
+    movie_path = eval_base_path + '_%s_%s.mp4'%(args.eval_filename_modifier,args.camera_view)
+    plotting.plot_frames(movie_path, eval_replay_buffer.get_last_steps(eval_replay_buffer.size), plot_action_frames=True, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=False)
+
+def test_mujoco_controllers_relative_step():
+    print("starting evaluation for {} episodes".format(args.num_eval_episodes))
+    # generate random seed
+
+    eval_base_path = os.path.join(results_dir, '_relstep%s_tc%s'%(args.relative_step, args.eval_filename_modifier))
+    eval_step_file_path = eval_base_path+'.cpkl' 
+    eval_env = suite.load(domain_name=domain, task_name=task, task_kwargs=task_kwargs,  environment_kwargs=environment_kwargs)
+    print("CREATING REPLAY eval", cam_dim)
+    eval_replay_buffer = ReplayBuffer(kwargs['state_dim'], kwargs['action_dim'], 
+                                 max_size=int(args.eval_replay_size), 
+                                 cam_dim=cam_dim, seed=seed)
     print(amins)
     print(amaxes)
     error_dict = {}
@@ -181,7 +255,7 @@ def test_mujoco_controllers():
         ebase = emovie_path.replace('.mp4', '')
 
         plotting.plot_states(last_steps, ebase, detail_dict=state_names_dict)
-        plotting.plot_position_actions(last_steps, ebase, relative=True)
+        plotting.plot_position_actions(last_steps, ebase, relative=args.relative_step)
         plotting.plot_frames(emovie_path, eval_replay_buffer.get_last_steps(num_steps), plot_action_frames=True, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=True)
         pickle.dump(eval_replay_buffer, open(ebase+'.epkl', 'wb'))
         plotting.plot_replay_reward(eval_replay_buffer, ebase, start_step=0, name_modifier='train')
@@ -195,8 +269,6 @@ def test_mujoco_controllers():
 
     movie_path = eval_base_path + '_%s_%s.mp4'%(args.eval_filename_modifier,args.camera_view)
     plotting.plot_frames(movie_path, eval_replay_buffer.get_last_steps(eval_replay_buffer.size), plot_action_frames=True, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=False)
-
-    return eval_replay_buffer, eval_step_file_path
 
 def get_kwargs(env):
     state_dim = env.observation_spec()['observations'].shape[0]
@@ -216,9 +288,9 @@ if __name__ == "__main__":
     parser.add_argument("--fixed_target_position", default=[-.8, .6, 1.2], type=list, help='specify target in some tasks')
     parser.add_argument("--eval_replay_size", default=int(10000), type=int, help='number of steps to store in replay buffer')
     parser.add_argument("-ne", "--num_eval_episodes", default=1, type=int, help='')
-    parser.add_argument("--relative_step", default=True, type=bool)
+    parser.add_argument("--relative_step", default=False, action="store_true")
     parser.add_argument("--relative_step_size", default=.05, type=np.float)
-    parser.add_argument("--episode_timelimit", default=30, type=np.float)
+    parser.add_argument("--episode_timelimit", default=40, type=np.float)
     parser.add_argument("--frame_height", default=400)
     parser.add_argument("--frame_width", default=480)
     #parser.add_argument("--time_limit", default=10)                 # Time in seconds allowed to complete mujoco task
@@ -250,7 +322,7 @@ if __name__ == "__main__":
     file_name = "{}".format(args.exp_name)
     seed = args.seed
     task_kwargs = {
-                   'relative_step':True, 
+                   'relative_step':args.relative_step, 
                    'random':seed, 
                    'action_penalty':False,
                    'degrees_of_freedom':13,
@@ -276,7 +348,11 @@ if __name__ == "__main__":
     # Set seeds
     random_state = np.random.RandomState(seed)
     torch.manual_seed(seed)
-    eval_replay_buffer, eval_step_file_path = test_mujoco_controllers()
+
+    if args.relative_step:
+        test_mujoco_controllers_relative_step()
+    else:
+        test_mujoco_controllers_absolute_step()
 
 
 
