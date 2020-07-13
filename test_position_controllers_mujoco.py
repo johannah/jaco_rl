@@ -128,17 +128,21 @@ def test_mujoco_controllers():
                 print("direction", direction, action[jt], amins[jt], amaxes[jt])
 
             # turn hand so it is easier to see for finger moves
-            if jt == 4:
-                if num_steps < 10:
-                    action[3] = .1
-                else:
-                    action[3] = 0.0
+            #if num_steps < 10:
+            #    action[1] = .1
+            #    action[3] = .01
  
-            if jt > 6:
-                if num_steps < 10:
-                    action[5] = -.1
-                else:
-                    action[5] = 0.0
+            #if jt == 4:
+            #    if num_steps < 10:
+            #        action[3] = .1
+            #    else:
+            #        action[3] = 0.0
+ 
+            #if jt > 6:
+            #    if num_steps < 10:
+            #        action[5] = -.1
+            #    else:
+            #        action[5] = 0.0
             action[jt] = args.relative_step_size*direction
             #base_action[:7] = action
             print('JT{}N{}A'.format(jt,num_steps),action)
