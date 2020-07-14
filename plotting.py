@@ -53,7 +53,8 @@ def plot_frames(movie_fpath, last_steps, plot_frames=False, plot_action_frames=T
                 rb = np.digitize(re[s][0], reward_bins, right=True)
                 rinds = np.linspace(cp-(cp-rb), cp, np.abs(cp-rb)+1, dtype=np.int)
                 canvas[s,hw*(n_bars-1):(hw*n_bars),rinds] = reward_color
-            output = np.concatenate((fr, canvas, nfr), 2)
+            #output = np.concatenate((fr, canvas, nfr), 2)
+            output = np.concatenate((canvas, nfr), 2)
             vwrite(movie_fpath, output)
         except Exception as e:
             print(e)
