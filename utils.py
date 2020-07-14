@@ -1,51 +1,66 @@
+import copy
 import numpy as np
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import pickle
+
+# Implementation of Twin Delayed Deep Deterministic Policy Gradients (TD3)
+# Paper: https://arxiv.org/abs/1802.09477
+
+class BasePolicy():
+    def __init__(
+        self,
+        state_dim,
+        action_dim,
+        min_action,
+        max_action,
+        discount=0.99,
+        tau=0.005,
+        policy_noise=0.2,
+        noise_clip=0.5,
+        policy_freq=2,
+        seed=1222,
+        device='cpu'
+    ):
+        self.seed = seed
+        self.random_state = np.random.RandomState(seed)
+        self.max_action = max_action
+        self.min_action = min_action
+        self.action_dim = action_dim
+        self.state_dim = state_dim
+
+    def select_action(self, state):
+        action = np.random.uniform(low=self.min_action, high=self.max_action, size=self.action_dim)
+        return action
+
+    def train(self, replay_buffer, batch_size=100):
+        pass
+
+    def save(self, filename):
+        pass
+
+    def load(self, filename):
+        pass
 
 
-class ReplayBuffer(object):
-    def __init__(self, state_dim, action_dim, max_size=int(1e6), cam_dim=None):
-        self.max_size = max_size
-        self.ptr = 0
-        self.size = 0
+class RandomPolicy(BasePolicy):
+    def select_action(self, state):
+        action = np.random.uniform(low=self.min_action, high=self.max_action, size=self.action_dim)
+        return action
 
-        self.state = np.zeros((max_size, state_dim))
-        self.action = np.zeros((max_size, action_dim))
-        self.next_state = np.zeros((max_size, state_dim))
-        self.reward = np.zeros((max_size, 1))
-        self.not_done = np.zeros((max_size, 1))
-        if cam_dim is not None:
-            self.frames = np.zeros((max_size, cam_dim[0], cam_dim[1], cam_dim[2]), dtype=np.uint8)
+def save_info_dict(info, base_save_path):
+    pickle.dump(info, open(base_save_path+'.infopkl', 'wb'))
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def load_info_dict(base_load_path):
+    return pickle.load(open(base_load_path+'.infopkl', 'rb'))
 
-    def add(self, state, action, next_state, reward, done, frame=None):
-        self.state[self.ptr] = state
-        self.action[self.ptr] = action
-        self.next_state[self.ptr] = next_state
-        self.reward[self.ptr] = reward
-        self.not_done[self.ptr] = 1. - done
-        if frame != None:
-            self.frames[self.ptr] = frame
-
-        self.ptr = (self.ptr + 1) % self.max_size
-        self.size = min(self.size + 1, self.max_size)
-
-    def get_last_experience(self, num_steps_back):
-        ind = np.arange(self.size-num_steps_back, self.size)
-        return (
-            self.state[ind],
-            self.action[ind],
-            self.next_state[ind],
-            self.reward[ind],
-            self.not_done[ind],
-            self.frames[ind]
-        )
-    def sample(self, batch_size):
-        ind = np.random.randint(0, self.size, size=batch_size)
-        return (
-            torch.FloatTensor(self.state[ind]).to(self.device),
-            torch.FloatTensor(self.action[ind]).to(self.device),
-            torch.FloatTensor(self.next_state[ind]).to(self.device),
-            torch.FloatTensor(self.reward[ind]).to(self.device),
-            torch.FloatTensor(self.not_done[ind]).to(self.device),
-        )
+def create_new_info_dict(arg_dict, load_model_base='', load_replay_path=''):
+    info = {
+            'load_model_path':load_model_base+'.pt',
+            'load_replay_path':load_replay_path,
+            'save_start_times':[],
+            'save_end_times':[],
+            'args':[arg_dict],
+             }
+    return info

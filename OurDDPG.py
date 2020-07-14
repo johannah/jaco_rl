@@ -5,7 +5,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Re-tuned version of Deep Deterministic Policy Gradients (DDPG)
 # Paper: https://arxiv.org/abs/1509.02971
@@ -44,27 +43,36 @@ class Critic(nn.Module):
 
 
 class DDPG(object):
-    def __init__(self, state_dim, action_dim, max_action, discount=0.99, tau=0.005):
-        self.actor = Actor(state_dim, action_dim, max_action).to(device)
+    def __init__(self, state_dim, action_dim, max_action, discount=0.99, tau=0.005, device='cpu'):
+        self.device = device
+        self.actor = Actor(state_dim, action_dim, max_action).to(self.device)
         self.actor_target = copy.deepcopy(self.actor)
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters())
 
-        self.critic = Critic(state_dim, action_dim).to(device)
+        self.critic = Critic(state_dim, action_dim).to(self.device)
         self.critic_target = copy.deepcopy(self.critic)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters())
 
         self.discount = discount
         self.tau = tau
-
+        self.step = 0
+        self.loss_dict = {'actor':[], 'critic':[], 'step':[]}
 
     def select_action(self, state):
-        state = torch.FloatTensor(state.reshape(1, -1)).to(device)
+        state = torch.FloatTensor(state.reshape(1, -1)).to(self.device)
         return self.actor(state).cpu().data.numpy().flatten()
 
 
-    def train(self, replay_buffer, batch_size=100):
+    def train(self, step, replay_buffer, batch_size=100):
+        self.step = step
         # Sample replay buffer
-        state, action, next_state, reward, not_done = replay_buffer.sample(batch_size)
+
+        state, action, reward, next_state, not_done, _, _ = replay_buffer.sample(batch_size)
+        state = torch.FloatTensor(state).to(self.device)
+        action = torch.FloatTensor(action).to(self.device)
+        reward = torch.FloatTensor(reward).to(self.device)
+        next_state = torch.FloatTensor(next_state).to(self.device)
+        not_done = torch.FloatTensor(not_done).to(self.device)
 
         # Compute the target Q value
         target_Q = self.critic_target(next_state, self.actor_target(next_state))
@@ -88,6 +96,7 @@ class DDPG(object):
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
         self.actor_optimizer.step()
+        self.loss_dict = {'actor':[], 'critic':[], 'step':[]}
 
         # Update the frozen target models
         for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
@@ -96,17 +105,31 @@ class DDPG(object):
         for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
             target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
+    def save(self, filepath):
+        model_dict =  {'critic':self.critic.state_dict(), 
+                      'actor':self.actor.state_dict(), 
+                      'critic_optimizer':self.critic_optimizer.state_dict(), 
+                      'actor_optimizer':self.actor_optimizer.state_dict(),
+                      'loss_dict':self.loss_dict, 
+                      }
+        torch.save(model_dict, filepath)
 
-    def save(self, filename):
-        torch.save(self.critic.state_dict(), filename + "_critic")
-        torch.save(self.critic_optimizer.state_dict(), filename + "_critic_optimizer")
-        torch.save(self.actor.state_dict(), filename + "_actor")
-        torch.save(self.actor_optimizer.state_dict(), filename + "_actor_optimizer")
+    def get_loss_plot_data(self):
+        plot_dict =  {'critic':(self.loss_dict['step'], self.loss_dict['critic']), 
+                'actor':(self.loss_dict['step'], self.loss_dict['actor'])}
+        return plot_dict
 
-
-    def load(self, filename):
-        self.critic.load_state_dict(torch.load(filename + "_critic"))
-        self.critic_optimizer.load_state_dict(torch.load(filename + "_critic_optimizer"))
-        self.actor.load_state_dict(torch.load(filename + "_actor"))
-        self.actor_optimizer.load_state_dict(torch.load(filename + "_actor_optimizer"))
+    def load(self, filepath):
+        print("OurDDPG loading {}".format(filepath))
+        model_dict = torch.load(filepath)
+        self.critic.load_state_dict(model_dict['critic'])
+        self.actor.load_state_dict(model_dict['actor'])
+        self.critic_optimizer.load_state_dict(model_dict['critic_optimizer'])
+        self.actor_optimizer.load_state_dict(model_dict['actor_optimizer'])
+        self.loss_dict = model_dict['loss_dict']
+        # TODO this is wrong
+        if len(self.loss_dict['step']):
+            self.step = self.loss_dict['step'][-1]
+        else:
+            self.step = 0
 

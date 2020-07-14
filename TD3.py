@@ -4,9 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print('running on device: {}'.format(device))
+from IPython import embed
 # Implementation of Twin Delayed Deep Deterministic Policy Gradients (TD3)
 # Paper: https://arxiv.org/abs/1802.09477
 
@@ -75,37 +73,46 @@ class TD3(object):
         tau=0.005,
         policy_noise=0.2,
         noise_clip=0.5,
-        policy_freq=2
+        policy_freq=2,
+        device='cpu'
     ):
 
-        self.actor = Actor(state_dim, action_dim, max_action).to(device)
+        self.step = 0
+        self.device = device
+        self.actor = Actor(state_dim, action_dim, max_action).to(self.device)
         self.actor_target = copy.deepcopy(self.actor)
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=3e-4)
 
-        self.critic = Critic(state_dim, action_dim).to(device)
+        self.critic = Critic(state_dim, action_dim).to(self.device)
         self.critic_target = copy.deepcopy(self.critic)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=3e-4)
 
-        self.max_action = max_action
         self.discount = discount
         self.tau = tau
         self.policy_noise = policy_noise
         self.noise_clip = noise_clip
         self.policy_freq = policy_freq
+        self.max_action = max_action
 
         self.total_it = 0
+        self.loss_dict = {'actor':[], 'critic':[], 'critic_step':[], 'actor_step':[]}
 
 
     def select_action(self, state):
-        state = torch.FloatTensor(state.reshape(1, -1)).to(device)
+        state = torch.FloatTensor(state.reshape(1, -1)).to(self.device)
         return self.actor(state).cpu().data.numpy().flatten()
 
 
-    def train(self, replay_buffer, batch_size=100):
+    def train(self, step, replay_buffer, batch_size=100):
+        self.step = step
         self.total_it += 1
-
         # Sample replay buffer
-        state, action, next_state, reward, not_done = replay_buffer.sample(batch_size)
+        state, action, reward, next_state, not_done, _, _ = replay_buffer.sample(batch_size)
+        state = torch.FloatTensor(state).to(self.device)
+        action = torch.FloatTensor(action).to(self.device)
+        reward = torch.FloatTensor(reward).to(self.device)
+        next_state = torch.FloatTensor(next_state).to(self.device)
+        not_done = torch.FloatTensor(not_done).to(self.device)
 
         with torch.no_grad():
             # Select action according to policy and add clipped noise
@@ -113,6 +120,7 @@ class TD3(object):
                 torch.randn_like(action) * self.policy_noise
             ).clamp(-self.noise_clip, self.noise_clip)
 
+            # TODO - maybe clamp bt known min/max actions
             next_action = (
                 self.actor_target(next_state) + noise
             ).clamp(-self.max_action, self.max_action)
@@ -127,6 +135,8 @@ class TD3(object):
 
         # Compute critic loss
         critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
+        self.loss_dict['critic'].append(critic_loss.item())
+        self.loss_dict['critic_step'].append(step)
 
         # Optimize the critic
         self.critic_optimizer.zero_grad()
@@ -134,11 +144,13 @@ class TD3(object):
         self.critic_optimizer.step()
 
         # Delayed policy updates
+        actor_loss = 0
         if self.total_it % self.policy_freq == 0:
 
             # Compute actor losse
             actor_loss = -self.critic.Q1(state, self.actor(state)).mean()
-
+            self.loss_dict['actor'].append(actor_loss.item())
+            self.loss_dict['actor_step'].append(step)
             # Optimize the actor
             self.actor_optimizer.zero_grad()
             actor_loss.backward()
@@ -152,15 +164,31 @@ class TD3(object):
                 target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
 
-    def save(self, filename):
-        torch.save(self.critic.state_dict(), filename + "_critic")
-        torch.save(self.critic_optimizer.state_dict(), filename + "_critic_optimizer")
-        torch.save(self.actor.state_dict(), filename + "_actor")
-        torch.save(self.actor_optimizer.state_dict(), filename + "_actor_optimizer")
+    def save(self, filepath):
+        model_dict =  {'critic':self.critic.state_dict(), 
+                      'actor':self.actor.state_dict(), 
+                      'critic_optimizer':self.critic_optimizer.state_dict(), 
+                      'actor_optimizer':self.actor_optimizer.state_dict(),
+                      'loss_dict':self.loss_dict, 
+                      'total_it':self.total_it}
+        torch.save(model_dict, filepath)
 
+    def get_loss_plot_data(self):
+        plot_dict =  {'critic':(self.loss_dict['critic_step'], self.loss_dict['critic']), 
+                'actor':(self.loss_dict['actor_step'], self.loss_dict['actor'])}
+        return plot_dict
 
-    def load(self, filename):
-        self.critic.load_state_dict(torch.load(filename + "_critic"))
-        self.critic_optimizer.load_state_dict(torch.load(filename + "_critic_optimizer"))
-        self.actor.load_state_dict(torch.load(filename + "_actor"))
-        self.actor_optimizer.load_state_dict(torch.load(filename + "_actor_optimizer"))
+    def load(self, filepath):
+        print("TD3 loading {}".format(filepath))
+        model_dict = torch.load(filepath)
+        self.critic.load_state_dict(model_dict['critic'])
+        self.actor.load_state_dict(model_dict['actor'])
+        self.critic_optimizer.load_state_dict(model_dict['critic_optimizer'])
+        self.actor_optimizer.load_state_dict(model_dict['actor_optimizer'])
+        self.loss_dict = model_dict['loss_dict']
+        self.total_it = model_dict['total_it']
+        # TODO this is wrong
+        if len(self.loss_dict['critic_step']):
+            self.step = self.loss_dict['critic_step'][-1]
+        else:
+            self.step = 0
