@@ -92,7 +92,7 @@ def test_mujoco_controllers_absolute_step():
             obs_angles = deepcopy(next_state['observations'][3:13+3])
             print('JT{}N{}O'.format(jt,num_steps),obs_angles)
 
-            error = (last_obs_angles+action)-obs_angles
+            error = action-obs_angles
             abs_error = np.abs(error)
             if np.max(abs_error) > .1:
                 print("----ERROR", error)
@@ -290,7 +290,7 @@ if __name__ == "__main__":
     parser.add_argument("-ne", "--num_eval_episodes", default=1, type=int, help='')
     parser.add_argument("--relative_step", default=False, action="store_true")
     parser.add_argument("--relative_step_size", default=.05, type=np.float)
-    parser.add_argument("--episode_timelimit", default=40, type=np.float)
+    parser.add_argument("--episode_timelimit", default=20, type=np.float)
     parser.add_argument("--frame_height", default=400)
     parser.add_argument("--frame_width", default=480)
     #parser.add_argument("--time_limit", default=10)                 # Time in seconds allowed to complete mujoco task

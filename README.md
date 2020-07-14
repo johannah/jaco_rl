@@ -13,3 +13,8 @@ python test.py --domain reacher --task easy --policy TD3 --seed 100 --device 'cu
 ``
 python test.py --domain reacher --task easy --policy TD3 --seed 101 --load_model 'results/reacher_easy_00'  --eval --state_pixels
 ```
+
+
+### General tips:
+
+Debugging doc with info on ros-states and respective positions: https://docs.google.com/document/d/1FZcfzBCuFEt6Y-qjXhoz6kRAw_23119vy4JQ7mlBOYM/edit?usp=sharing
