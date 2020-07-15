@@ -125,11 +125,8 @@ def evaluate(load_model_filepath):
                                        min_action=-kwargs['max_action'], max_action=kwargs['max_action'], 
                                      plot_frames=args.plot_frames)
 
-            if not e%10 or e == args.num_eval_episodes-1:
-                print("---------------------------------------")
-                eval_replay_buffer.shrink_to_last_step()
-                pickle.dump(eval_replay_buffer, open(eval_step_filepath, 'wb'))
-
+    eval_replay_buffer.shrink_to_last_step()
+    pickle.dump(eval_replay_buffer, open(eval_step_filepath, 'wb'))
     # plot evaluation
     plotting.plot_replay_reward(eval_replay_buffer, eval_base, start_step=train_step, name_modifier='eval')
     plotting.plot_states(eval_replay_buffer.get_last_steps(eval_replay_buffer.size), 
