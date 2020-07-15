@@ -1,6 +1,7 @@
 # RL on Jaco Arm in DeepMind Control Suite
-This repository provides the tools to train a Jaco arm with dm_control. It depends on a dm_control repository. 
-[here](https://github.com/johannah/jaco). 
+
+* This repository provides the tools to train a Jaco2 arm with dm_control. It depends on a dm_control repository. 
+[here](https://github.com/johannah/dm_control/tree/jaco_arm_controllers). 
 * The agent implementations are taken from the [Official TD3 repository](https://github.com/sfujim/TD3).
 
 
