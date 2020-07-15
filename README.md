@@ -33,4 +33,4 @@ python main.py --domain reacher --task easy --policy TD3 --load_model 'results/r
 
 ### General tips:
 
-Debugging doc with info on ros-states and respective positions: https://docs.google.com/document/d/1FZcfzBCuFEt6Y-qjXhoz6kRAw_23119vy4JQ7mlBOYM/edit?usp=sharing
+Debugging [doc](https://docs.google.com/document/d/1FZcfzBCuFEt6Y-qjXhoz6kRAw_23119vy4JQ7mlBOYM/edit?usp=sharing) with details on robot positions and angles. 
