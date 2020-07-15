@@ -124,9 +124,11 @@ def evaluate(load_model_filepath):
                                       plot_action_frames=args.plot_action_movie,
                                        min_action=-kwargs['max_action'], max_action=kwargs['max_action'], 
                                      plot_frames=args.plot_frames)
-        print("---------------------------------------")
-        eval_replay_buffer.shrink_to_last_step()
-        pickle.dump(eval_replay_buffer, open(eval_step_filepath, 'wb'))
+
+            if not e%10 or e == args.num_eval_episodes-1:
+                print("---------------------------------------")
+                eval_replay_buffer.shrink_to_last_step()
+                pickle.dump(eval_replay_buffer, open(eval_step_filepath, 'wb'))
 
     # plot evaluation
     plotting.plot_replay_reward(eval_replay_buffer, eval_base, start_step=train_step, name_modifier='eval')
@@ -349,8 +351,8 @@ if __name__ == "__main__":
     parser.add_argument("-ne", "--num_eval_episodes", default=10, type=int, help='')
     parser.add_argument("--state_pixels", default=False, action='store_true', help='return pixels from cameras for plotting')              
     parser.add_argument('-g', "--convert_to_gray", default=False, action='store_true', help='grayscale images')               
-    parser.add_argument("--frame_height", default=200)
-    parser.add_argument("--frame_width", default=240)
+    parser.add_argument("--frame_height", default=100)
+    parser.add_argument("--frame_width", default=120)
     parser.add_argument('-pm', "--plot_movie", default=False, action='store_true', help='write a movie of episodes')                 
     parser.add_argument('-pam', "--plot_action_movie", default=False, action='store_true', help='write a movie with state view, actions, rewards, and next state views')                 
     parser.add_argument('-pf', "--plot_frames", default=False, action='store_true', help='write a movie and individual frames')                 
