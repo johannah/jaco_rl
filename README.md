@@ -26,7 +26,7 @@ python main.py --domain reacher --task easy --policy TD3 --seed 100 --device 'cu
 ```
 
 ### Example plot and eval previous experiment
-``
+```
 python main.py --domain reacher --task easy --policy TD3 --load_model 'results/reacher_easy_00'  --eval --plot_movie
 ```
 
