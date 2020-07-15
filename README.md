@@ -11,12 +11,12 @@ python main.py --domain jaco --task relative_position_reacher_7DOF --policy TD3 
 ```
 
 ### Example plot and eval latest trained model
-``
+```
 python main.py --domain jaco --task relative_position_reacher_7DOF --policy TD3 --load_model results/jaco_relative_reacher_00/ --plot_action_movie
 
 ```
-![](media/jaco_reacher.gif)
 
+![](media/jaco_reacher.gif)
 --- 
 
 ### Example training for reacher:
