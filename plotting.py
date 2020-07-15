@@ -31,7 +31,7 @@ def plot_frames(movie_fpath, last_steps, plot_frames=False, plot_action_frames=T
         n_actions = ac.shape[1]
         n_bars = n_actions + 1
         _, hsize, fr_wsize, nc = fr.shape
-        wsize = int(fr_wsize*.40)
+        wsize = int(fr_wsize*.20)
         n_bins = wsize
         cp = n_bins//2
         hw = hsize//n_bars
