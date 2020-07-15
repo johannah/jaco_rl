@@ -1,6 +1,6 @@
 # RL on Jaco Arm in DeepMind Control Suite
 
-* This repository provides the tools to train a Jaco2 arm with dm_control. It depends on our version of the [dm_control](https://github.com/johannah/dm_control/tree/jaco_arm_controllers). 
+* This repository provides the tools to train a Jaco2 arm with dm_control. It depends on our version of the [dm_control](https://github.com/johannah/dm_control/commit/c96d43f9481ed30c202a980cf06f3cdaced8854f). 
 * The agent implementations are taken from the [Official TD3 repository](https://github.com/sfujim/TD3).
 
 ### Example training for Jaco2 7DOF robot with position controllers:
