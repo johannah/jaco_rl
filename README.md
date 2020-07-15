@@ -34,4 +34,4 @@ Debugging [doc](https://docs.google.com/document/d/1FZcfzBCuFEt6Y-qjXhoz6kRAw_23
 
 ### Thanks
 
-This work was built off of original work done by [Sahand](https://github.com/sahandrez)
+This work was built off of a collection of repos developed by [@sahandrez](https://github.com/sahandrez)
