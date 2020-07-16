@@ -14,6 +14,7 @@ add steps to replay_buffer
 -- dm_control:
 add target position return in to env creation
 penalize collisions with itself
+take out hardcoded debug 7s and make compatible with 6dof again (also fix 6dof xml)
 
 -- ros_interface
 ctrl-c isnt working server
