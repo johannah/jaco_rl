@@ -14,6 +14,8 @@ python main.py --domain jaco --task relative_position_reacher_7DOF --policy TD3 
 
 ```
 
+Example gif from trained reacher where first 7 color bars are relative actions of joints 1-7 and the final red bar is reward.
+
 ![](media/jaco_reacher.gif)
 --- 
 
