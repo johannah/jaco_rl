@@ -13,7 +13,11 @@ python main.py --domain jaco --task relative_position_reacher_7DOF --policy TD3 
 python main.py --domain jaco --task relative_position_reacher_7DOF --policy TD3 --load_model results/jaco_relative_reacher_00/ --plot_action_movie
 
 ```
+### Example plot and eval latest trained model with topview camera
+```
+python main.py --domain jaco --task relative_position_reacher_7DOF --policy TD3 --load_model results/jaco_relative_reacher_00/ --plot_action_movie --camera_view 'topview'
 
+```
 Example gif from trained reacher where first 7 color bars are relative actions of joints 1-7 and the final red bar is reward.
 
 ![](media/jaco_reacher.gif)
