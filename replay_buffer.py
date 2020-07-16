@@ -103,9 +103,12 @@ class ReplayBuffer(object):
                 self.fake_frames = np.zeros(self.fake_dim, np.uint8)
             return self.states[batch_indexes], self.actions[batch_indexes], self.rewards[batch_indexes], self.next_states[batch_indexes], self.not_dones[batch_indexes], self.fake_frames, self.fake_frames
 
-    def sample(self, batch_size):
+    def sample(self, batch_size, return_indexes=False):
         indexes = self.random_state.randint(0,self.num_steps_available(),batch_size)
-        return self.get_indexes(indexes)
+        if return_indexes:
+            return self.get_indexes(indexes), indexes
+        else:
+            return self.get_indexes(indexes)
 
 if __name__ == '__main__':
     def test_fake_replay():
