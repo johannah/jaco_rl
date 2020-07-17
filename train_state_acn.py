@@ -1,3 +1,8 @@
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import os
+import sys
 from IPython import embed
 import pickle
 import numpy as np
@@ -127,14 +132,9 @@ class ACNresAngle(nn.Module):
         return x_tilde, z_e_x, z_q_x, latents
 
 
-def run():
+def run(train_cnt):
     log_ones = torch.zeros(batch_size, code_length).to(device)
-    train_cnt = 0
-    losses = {
-              'train':{'kl':[],'rec':[],'vq':[],'commit':[],'steps':[]},
-              'valid':{'kl':[],'rec':[],'vq':[],'commit':[],'steps':[]}
-              }
-    while True:
+    for dataset_view in range(10000):
         for phase in ['valid', 'train']:
             for i in range(replay_buffer[phase].size//batch_size):
                 sample,batch_indexes = replay_buffer[phase].sample(batch_size, return_indexes=True)    
@@ -143,9 +143,9 @@ def run():
                 state = torch.cat((rel_st,rel_st,rel_st,rel_st),3)
                 u_q = model(state)
                 u_q_flat = u_q.view(batch_size, code_length).contiguous()
-                #if phase == 'train':
-                #    assert batch_indexes.max() < prior_model.codes.shape[0]
-                #    prior_model.update_codebook(batch_indexes, u_q_flat.detach())
+                if phase == 'train':
+                    assert batch_indexes.max() < prior_model.codes.shape[0]
+                    prior_model.update_codebook(batch_indexes, u_q_flat.detach())
                 u_p, s_p = prior_model(u_q_flat)
                 rec_state, z_e_x, z_q_x, latents = model.decode(u_q)
                 kl = kl_loss_function(u_q.view(batch_size, code_length), 
@@ -153,7 +153,7 @@ def run():
                                       u_p.view(batch_size, code_length), 
                                       s_p.view(batch_size, code_length),
                                       reduction='sum')
-                rec_loss = mse_loss(rel_st, rec_state) 
+                rec_loss = mse_loss(rel_st, rec_state)*(rec_state.shape[-1]*10000)
                 vq_loss = mse_loss(z_q_x, z_e_x.detach())
                 commit_loss = mse_loss(z_e_x, z_q_x.detach())*vq_commitment_beta
                 if phase == 'train':
@@ -165,26 +165,131 @@ def run():
                     commit_loss.backward(retain_graph=True)
                     opt.step()
                     train_cnt += batch_size 
-                losses[phase]['kl'].append(kl.detach().cpu().item())
-                losses[phase]['rec'].append(kl.detach().cpu().item())
-                losses[phase]['vq'].append(kl.detach().cpu().item())
-                losses[phase]['commit'].append(kl.detach().cpu().item())
-                losses[phase]['steps'].append(train_cnt)
-            print(losses)
+            losses[phase]['kl'].append(kl.detach().cpu().item())
+            losses[phase]['rec'].append(rec_loss.detach().cpu().item())
+            losses[phase]['vq'].append(vq_loss.detach().cpu().item())
+            losses[phase]['commit'].append(commit_loss.detach().cpu().item())
+            losses[phase]['steps'].append(train_cnt)
 
-            model_dict = {'model':model.state_dict(), 
-                          'prior_model':prior_model.state_dict(), 
-                          'train_cnt':train_cnt, 
-                          'losses':losses
-                        }
-            mpath = 'models/model_%08d.pt'%train_cnt
-            torch.save(model_dict, mpath)
-            print('saving {}'.format(mpath))
+            if phase == 'train' and not dataset_view%30:
+                model_dict = {'model':model.state_dict(), 
+                              'prior_model':prior_model.state_dict(), 
+                              'train_cnt':train_cnt, 
+                              'losses':losses
+                            }
+                mpath = 'models1/model_%012d.pt'%train_cnt
+                torch.save(model_dict, mpath)
+                print('saving {}'.format(mpath))
     embed() 
 
+def create_latent_file():
+    latent_base = load_path.replace('.pt', '_latents')
+    for phase in ['valid', 'train']:
+        if not os.path.exists(latent_base + '_%s.npz'%phase):
+            sz = replay_buffer[phase].size
+            indexes = np.arange(sz)
+            for i in range(0, sz, batch_size):
+                batch_indexes = indexes[i:min([i+batch_size, sz])]
+                bs = batch_indexes.shape[0]
+                sample = replay_buffer[phase].get_indexes(batch_indexes)    
+                st,ac,r,nst,nd,fr,nfr = sample
+                rel_st = torch.FloatTensor(nst[:,3:3+7]-st[:,3:3+7])[:,None,None,:].to(device)
+                state = torch.cat((rel_st,rel_st,rel_st,rel_st),3)
+                u_q = model(state)
+                u_q_flat = u_q.view(bs, code_length).contiguous()
+                #if phase == 'train':
+                #    assert batch_indexes.max() < prior_model.codes.shape[0]
+                #    prior_model.update_codebook(batch_indexes, u_q_flat.detach())
+                u_p, s_p = prior_model(u_q_flat)
+                rec_st, z_e_x, z_q_x, latents = model.decode(u_q)
+                neighbor_distances, neighbor_indexes = prior_model.kneighbors(u_q_flat, n_neighbors=num_k)
+
+                if not i:
+                    all_indexes = batch_indexes
+                    all_rel_st = rel_st.detach().cpu().numpy()
+                    all_rec_st = rec_st.detach().cpu().numpy()
+                    all_acn_uq = u_q.detach().cpu().numpy() 
+                    all_acn_sp = s_p.detach().cpu().numpy() 
+                    all_neighbors = neighbor_indexes
+                    all_neighbor_distances = neighbor_distances.detach().cpu().numpy()
+                    all_vq_latents = latents.detach().cpu().numpy()
+                else:
+                    all_indexes = np.hstack((all_indexes, batch_indexes))
+                    all_rel_st = np.vstack((all_rel_st, rel_st.detach().cpu().numpy()))
+                    all_rec_st = np.vstack((all_rec_st, rec_st.detach().cpu().numpy()))
+                    all_acn_uq = np.vstack((all_acn_uq, u_q.detach().cpu().numpy()))
+                    all_acn_sp = np.vstack((all_acn_sp, s_p.detach().cpu().numpy()))
+                    all_neighbors = np.vstack((all_neighbors, neighbor_indexes.detach().cpu().numpy()))
+                    all_neighbor_distances = np.vstack((all_neighbor_distances, neighbor_distances.detach().cpu().numpy()))
+                    all_vq_latents = np.vstack((all_vq_latents, latents.detach().cpu().numpy()))
+
+            np.savez(latent_base+'_%s'%phase,
+                     index=all_indexes,
+                     rel_st=all_rel_st,
+                     rec_st=all_rec_st,
+                     acn_uq=all_acn_uq,
+                     acn_sp=all_acn_sp,
+                     neighbor_train_indexes=all_neighbors,
+                     neighbor_distances=all_neighbor_distances,
+                     vq_latents=all_vq_latents)
+    return latent_base
+
+
+def plot_losses():
+    plt_base = load_path.replace('.pt', '')
+    for lparam in losses['train'].keys():
+        if lparam != 'steps':
+            plt.figure()
+            plt.plot(losses['train']['steps'][1:], losses['train'][lparam][1:], label='train')
+            plt.plot(losses['valid']['steps'][1:], losses['valid'][lparam][1:], label='valid')
+            plt.title(lparam)
+            plt.legend()
+            plt.savefig(plt_base+'_losses_%s.png'%lparam)
+            plt.close()
+
+def plot_latents(train_latent_file, valid_latent_file):
+    train_latents = np.load(train_latent_file)
+    valid_latents = np.load(valid_latent_file)
+    blues = plt.cm.Blues(np.linspace(0.2,.8,num_k))[::-1]
+
+    pltdir = load_path.replace('.pt', '_plots')
+    if not os.path.exists(pltdir):
+        os.makedirs(pltdir)
+    
+    ymin = train_latents['rel_st'].min()
+    ymax = train_latents['rel_st'].max()
+    for phase, latents in [('train',train_latents), ('valid',valid_latents)]:
+        n = np.random.randint(0, latents['rel_st'].shape[0], 10).astype(np.int)
+        for i in n:
+            plt.figure()
+            plt.plot(latents['rel_st'][i,0,0], label='data', lw=2, marker='x', color='mediumorchid')
+            plt.plot(latents['rec_st'][i,0,0], label='rec', lw=1.5, marker='o', color='blue')
+            for nn, n in enumerate(latents['neighbor_train_indexes'][i]):
+                # relative to train latents
+                plt.plot(train_latents['rec_st'][n,0,0], label='k:%d i:%d'%(nn,n), lw=1., marker='.', color=blues[nn], alpha=.5)
+            plt.ylim(ymin, ymax)
+            plt.legend()
+            pltname = os.path.join(pltdir, '%s_%05d.png'%(phase,i))
+            print('plotting %s'%pltname)
+            plt.savefig(pltname)
+            plt.close()
+     
+ 
+
+
 if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--plot', default=False, action='store_true')
+    parser.add_argument('--load_model', default='')
+    try:
+        args = parser.parse_args()
+    except:
+        parser.print_help()
+        sys.exit()
+
     valid_fname = 'results/relpos00/relpos_TD3_jaco_00000_0003100000_eval/test_TD3_jaco_00000_0003100000_eval_S3100000.epkl' 
-    train_fname = 'results/relpos00/relpos_TD3_jaco_00000_0000040000.pkl'
+    train_fname = 'results/relpos00/relpos_TD3_jaco_00000_0000060000.pkl'
     replay_buffer = {}
     replay_buffer['train'] = pickle.load(open(train_fname, 'rb'))
     replay_buffer['valid'] = pickle.load(open(valid_fname, 'rb'))
@@ -193,14 +298,45 @@ if __name__ == '__main__':
     code_length = 112
     vq_commitment_beta = 0.25
     num_k = 5
-    mse_loss = nn.MSELoss(reduction='sum')
+    losses = {
+              'train':{'kl':[],'rec':[],'vq':[],'commit':[],'steps':[]},
+              'valid':{'kl':[],'rec':[],'vq':[],'commit':[],'steps':[]}
+              }
+ 
     model = ACNresAngle().to(device)
-    prior_model = tPTPriorNetwork(size_training_set=replay_buffer['train'].size, 
+    train_size = replay_buffer['train'].size
+    print("setting up prior with training size {}".format(train_size))
+    prior_model = tPTPriorNetwork(size_training_set=train_size, 
                                   code_length=code_length,
                                   k=num_k).to(device)
-    parameters = []
-    parameters+=list(model.parameters())
-    parameters+=list(prior_model.parameters())
-    opt = optim.Adam(parameters, lr=1e-4)
-    run()
+
+    train_cnt = 0
+    if args.load_model != '':
+        if '.pt' in args.load_model:
+            load_path = args.load_model
+        else:
+            assert os.path.isdir(args.load_model)
+            from glob import glob 
+            search = os.path.join(args.load_model, '*.pt')
+            print('searching {} for models'.format(search))
+            found_models = sorted(glob(search))
+            print('found {} models'.format(len(found_models)))
+            load_path = found_models[-1]
+        print('loading {}'.format(load_path))
+        model_dict = torch.load(load_path)
+        losses = model_dict['losses']
+        model.load_state_dict(model_dict['model'])
+        prior_model.load_state_dict(model_dict['prior_model'])
+        train_cnt = model_dict['train_cnt']
+    if args.plot:
+        plot_losses()
+        latent_base = create_latent_file()
+        plot_latents(latent_base + '_train.npz', latent_base + '_valid.npz')
+    else:
+        mse_loss = nn.MSELoss(reduction='sum')
+        parameters = []
+        parameters+=list(model.parameters())
+        parameters+=list(prior_model.parameters())
+        opt = optim.Adam(parameters, lr=1e-4)
+        run(train_cnt)
 
