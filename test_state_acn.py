@@ -68,7 +68,7 @@ def plot_latent_estimates(load_model_filepath):
     latent_env = suite.load(domain_name=args.domain, task_name=args.task, task_kwargs=task_kwargs,  environment_kwargs=environment_kwargs)
     # generate random seed
 
-    latent_dir = os.path.join(load_model_base + '_latent%s'%args.eval_filename_modifier)
+    latent_dir = os.path.join(load_model_base + '_swap_latent%s'%args.eval_filename_modifier)
     if not os.path.exists(latent_dir):
         os.makedirs(latent_dir)
     print('saving results to dir: {}'.format(latent_dir))

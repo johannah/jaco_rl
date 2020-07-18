@@ -7,6 +7,7 @@ from IPython import embed
 import pickle
 import numpy as np
 from collections import OrderedDict
+from copy import deepcopy
 import torch
 from torch import nn, optim
 from torchvision import transforms
@@ -14,6 +15,9 @@ from torch.nn.utils.clip_grad import clip_grad_value_
 from functions import vq, vq_st
 from acn_models import tPTPriorNetwork
 from acn_utils import kl_loss_function
+from acn_utils import tsne_plot
+from acn_utils import pca_plot
+from sklearn.cluster import KMeans
 
 def weights_init(m):
     classname = m.__class__.__name__
@@ -183,48 +187,43 @@ def run(train_cnt):
     embed() 
 
 def create_latent_file():
+    model.eval()
+    prior_model.eval()
     latent_base = load_path.replace('.pt', '_latents')
-    for phase in ['valid', 'train']:
+    blues = plt.cm.Blues(np.linspace(0.2,.8,num_k))[::-1]
+    pltdir = load_path.replace('.pt', '_plots')
+    for phase in ['train', 'valid']:
         if not os.path.exists(latent_base + '_%s.npz'%phase):
             sz = replay_buffer[phase].size
-            indexes = np.arange(sz)
-            for i in range(0, sz, batch_size):
-                batch_indexes = indexes[i:min([i+batch_size, sz])]
-                bs = batch_indexes.shape[0]
+            all_indexes = []; all_st = []
+            all_rel_st = []; all_rec_st = []
+            all_acn_uq = []; all_acn_sp = []
+            all_neighbors = []; all_neighbor_distances = []; all_vq_latents = []
+            for i in range(0,sz,batch_size):
+                batch_indexes = np.arange(i, min([i+batch_size, sz]))
                 sample = replay_buffer[phase].get_indexes(batch_indexes)    
                 st,ac,r,nst,nd,fr,nfr = sample
+                all_st.extend(st[:,3:3+7])
                 rel_st = torch.FloatTensor(nst[:,3:3+7]-st[:,3:3+7])[:,None,None,:].to(device)
                 state = torch.cat((rel_st,rel_st,rel_st,rel_st),3)
                 u_q = model(state)
-                u_q_flat = u_q.view(bs, code_length).contiguous()
-                #if phase == 'train':
-                #    assert batch_indexes.max() < prior_model.codes.shape[0]
-                #    prior_model.update_codebook(batch_indexes, u_q_flat.detach())
+                u_q_flat = u_q.view(batch_indexes.shape[0], code_length).contiguous()
                 u_p, s_p = prior_model(u_q_flat)
                 rec_st, z_e_x, z_q_x, latents = model.decode(u_q)
                 neighbor_distances, neighbor_indexes = prior_model.kneighbors(u_q_flat, n_neighbors=num_k)
-
-                if not i:
-                    all_indexes = batch_indexes
-                    all_rel_st = rel_st.detach().cpu().numpy()
-                    all_rec_st = rec_st.detach().cpu().numpy()
-                    all_acn_uq = u_q.detach().cpu().numpy() 
-                    all_acn_sp = s_p.detach().cpu().numpy() 
-                    all_neighbors = neighbor_indexes
-                    all_neighbor_distances = neighbor_distances.detach().cpu().numpy()
-                    all_vq_latents = latents.detach().cpu().numpy()
-                else:
-                    all_indexes = np.hstack((all_indexes, batch_indexes))
-                    all_rel_st = np.vstack((all_rel_st, rel_st.detach().cpu().numpy()))
-                    all_rec_st = np.vstack((all_rec_st, rec_st.detach().cpu().numpy()))
-                    all_acn_uq = np.vstack((all_acn_uq, u_q.detach().cpu().numpy()))
-                    all_acn_sp = np.vstack((all_acn_sp, s_p.detach().cpu().numpy()))
-                    all_neighbors = np.vstack((all_neighbors, neighbor_indexes.detach().cpu().numpy()))
-                    all_neighbor_distances = np.vstack((all_neighbor_distances, neighbor_distances.detach().cpu().numpy()))
-                    all_vq_latents = np.vstack((all_vq_latents, latents.detach().cpu().numpy()))
-
+                all_indexes.extend(batch_indexes)
+                all_rel_st.extend(deepcopy(rel_st.detach().cpu().numpy()))
+                all_rec_st.extend(deepcopy(rec_st.detach().cpu().numpy()))
+                all_acn_uq.extend(deepcopy(u_q.detach().cpu().numpy()))
+                all_acn_sp.extend(deepcopy(s_p.detach().cpu().numpy()))
+                all_neighbors.extend(deepcopy(neighbor_indexes.detach().cpu().numpy()))
+                all_neighbor_distances.extend(deepcopy(neighbor_distances.detach().cpu().numpy()))
+                all_vq_latents.extend(latents.detach().cpu().numpy())
+                if i == 0 and phase=='train':
+                    print(all_neighbors)
             np.savez(latent_base+'_%s'%phase,
                      index=all_indexes,
+                     st=all_st,
                      rel_st=all_rel_st,
                      rec_st=all_rec_st,
                      acn_uq=all_acn_uq,
@@ -248,40 +247,66 @@ def plot_losses():
             plt.close()
 
 def plot_latents(train_latent_file, valid_latent_file):
-    train_latents = np.load(train_latent_file)
-    valid_latents = np.load(valid_latent_file)
+    
+    train_data = np.load(train_latent_file)
+    valid_data = np.load(valid_latent_file)
     blues = plt.cm.Blues(np.linspace(0.2,.8,num_k))[::-1]
 
     pltdir = load_path.replace('.pt', '_plots')
     if not os.path.exists(pltdir):
         os.makedirs(pltdir)
     
-    ymin = train_latents['rel_st'].min()
-    ymax = train_latents['rel_st'].max()
-    for phase, latents in [('train',train_latents), ('valid',valid_latents)]:
-        n = np.random.randint(0, latents['rel_st'].shape[0], 10).astype(np.int)
-        for i in n:
+    ymin = -.1 #train_latents['rel_st'].min()
+    ymax = .1  #train_latents['rel_st'].max()
+    for phase, data in [('train',train_data), ('valid',valid_data)]:
+        images = []
+        #inds = np.random.randint(0, data['rel_st'].shape[0], args.num_plot_examples).astype(np.int)
+        inds = np.arange(0, min([400,data['rel_st'].shape[0]])).astype(np.int)
+        for i in inds:
             plt.figure()
-            plt.plot(latents['rel_st'][i,0,0], label='data', lw=2, marker='x', color='mediumorchid')
-            plt.plot(latents['rec_st'][i,0,0], label='rec', lw=1.5, marker='o', color='blue')
-            for nn, n in enumerate(latents['neighbor_train_indexes'][i]):
+            plt.plot(data['rel_st'][i,0,0], label='data', lw=2, marker='x', color='mediumorchid')
+            plt.plot(data['rec_st'][i,0,0], label='rec', lw=1.5, marker='o', color='blue')
+            #plt.plot(data['rel_st'][i,0,0] + data['st'][i], label='data', lw=2, marker='x', color='mediumorchid')
+            #plt.plot(data['rec_st'][i,0,0] + data['st'][i], label='rec', lw=1.5, marker='o', color='blue')
+            for nn, n in enumerate(data['neighbor_train_indexes'][i]):
                 # relative to train latents
-                plt.plot(train_latents['rec_st'][n,0,0], label='k:%d i:%d'%(nn,n), lw=1., marker='.', color=blues[nn], alpha=.5)
-            plt.ylim(ymin, ymax)
-            plt.legend()
+                #plt.plot(train_data['rel_st'][n,0,0] + data['st'][i], label='k:%d i:%d'%(nn,n), lw=1., marker='.', color=blues[nn], alpha=.5)
+                plt.plot(train_data['rel_st'][n,0,0], label='k:%d i:%d'%(nn,n), lw=1., marker='.', color=blues[nn], alpha=.5)
+            plt.ylim(ymin, ymax)                    
+            plt.title('%s'%i)
+            #plt.legend()
             pltname = os.path.join(pltdir, '%s_%05d.png'%(phase,i))
             print('plotting %s'%pltname)
             plt.savefig(pltname)
             plt.close()
      
- 
-
+            images.append(plt.imread(pltname))
+        images = np.array(images)
+        X = data['acn_uq'][inds]
+        X = X.reshape(X.shape[0], -1)
+        #km = KMeans(n_clusters=max([1,inds.shape[0]//3]))
+        #y = km.fit_predict(latents['rel_st'][inds,0,0])
+        # color points based on clustering, label, or index
+        color = inds
+        perplexity = 10
+        param_name = '_tsne_%s_P%s.html'%(phase, perplexity)
+        html_path = load_path.replace('.pt', param_name)
+        tsne_plot(X=X, images=images, color=color,
+                      perplexity=perplexity,
+                      html_out_path=html_path, serve=False, img_size=cluster_img_size)
+        param_name = '_pca_%s.html'%(phase)
+        html_path = load_path.replace('.pt', param_name)
+        pca_plot(X=X, images=images, color=color,
+                     html_out_path=html_path, serve=False, img_size=cluster_img_size) 
+        
 
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--plot', default=False, action='store_true')
     parser.add_argument('--load_model', default='')
+    parser.add_argument('--num_plot_examples', default=500)
+    cluster_img_size = (120,120)
     try:
         args = parser.parse_args()
     except:
