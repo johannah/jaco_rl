@@ -173,16 +173,16 @@ if __name__ == '__main__':
     min_action = float(env.action_spec().minimum[0])
     max_action = float(env.action_spec().maximum[0])
     state_type, reward, discount, state = env.reset()
-    frame_compressed = replay.compress_frame(env.physics.render(height=frame_height,width=frame_width))
+    frame_compressed = compress_frame(env.physics.render(height=frame_height,width=frame_width))
     for i in range(test_size):
         action = random_state.uniform(low=min_action, high=max_action, size=action_dim)
         step_type, reward, discount, next_state = env.step(action)
         done = step_type.last()
-        next_frame_compressed = replay.compress_frame(env.physics.render(height=frame_height,width=frame_width))
+        next_frame_compressed = compress_frame(env.physics.render(height=frame_height,width=frame_width))
         replay.add(state['observations'], action, reward, next_state['observations'], done, frame_compressed=frame_compressed, next_frame_compressed=next_frame_compressed)
         if done:
             state_type, reward, discount, state = env.reset()
-            frame = replay.compress_frame(env.physics.render(height=frame_height,width=frame_width))
+            frame = compress_frame(env.physics.render(height=frame_height,width=frame_width))
         else:
             next_state = state
             frame_compressed = next_frame_compressed

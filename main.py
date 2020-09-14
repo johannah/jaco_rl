@@ -23,7 +23,12 @@ from IPython import embed
 
 def get_next_frame(frame_env):
     next_frame = None
-    if args.state_pixels:
+    if args.camera_view == 'double':
+        next_frame_def = frame_env.physics.render(height=args.frame_height,width=args.frame_width,camera_id=-1)
+        next_frame_top = frame_env.physics.render(height=args.frame_height,width=args.frame_width,camera_id='topview')
+        next_frame = np.hstack((next_frame_def, next_frame_top))
+        next_frame = compress_frame(next_frame)
+    elif args.state_pixels:
         next_frame = frame_env.physics.render(height=args.frame_height,width=args.frame_width,camera_id=args.camera_view)
         if args.convert_to_gray:
             next_frame = img_as_ubyte(rgb2gray(next_frame)[:,:,None])
@@ -64,21 +69,21 @@ def evaluate(load_model_filepath):
     train_base = os.path.join(train_dir, get_step_filename(train_step)+'_train')
     plotting.plot_replay_reward(train_replay_buffer, train_base, start_step=train_step, name_modifier='train')
     plotting.plot_states(train_replay_buffer.get_last_steps(train_replay_buffer.size), 
-                train_base, detail_dict=state_names_dict)
- 
+                         train_base, detail_dict=state_names_dict)
 
-    eval_dir = os.path.join(load_model_base + '_eval%s'%args.eval_filename_modifier)
+    eval_dir = os.path.join(load_model_base + '_eval_CAM%s_S%s_S%05d_E%04d'%(args.camera_view, args.eval_filename_modifier, eval_seed, args.num_eval_episodes))
     if not os.path.exists(eval_dir):
         os.makedirs(eval_dir)
     print('saving results to dir: {}'.format(eval_dir))
-    eval_base = os.path.join(eval_dir, get_step_filename(train_step)+'_eval_S{:05d}'.format(eval_seed))
+    eval_base = os.path.join(eval_dir, get_step_filename(train_step)+'_eval_CAM%s_S%s_S%05d_E%04d'%(args.camera_view, args.eval_filename_modifier, eval_seed, args.num_eval_episodes))
 
-    eval_step_filepath = eval_base + '%s.epkl'%args.eval_filename_modifier
+    eval_step_filepath = eval_base + '.epkl' 
     if os.path.exists(eval_step_filepath) and not args.overwrite_replay:
         print('loading existing replay buffer:{}'.format(eval_step_filepath))
         eval_replay_buffer = load_replay_buffer(eval_step_filepath)
     else:
 
+        print('creating replay buffer')
         eval_replay_buffer = ReplayBuffer(kwargs['state_dim'], kwargs['action_dim'], 
                                      max_size=int(args.eval_replay_size), 
                                      cam_dim=cam_dim, seed=eval_seed)
@@ -87,8 +92,10 @@ def evaluate(load_model_filepath):
         for e in range(args.num_eval_episodes):
             done = False
             num_steps = 0
+            print('reset')
             state_type, reward, discount, state = eval_env.reset()
             frame_compressed = get_next_frame(eval_env)
+            print('starting episode', e)
             # TODO off by one error in step count!? of replay_buffer
             while done == False:
                 action = (
@@ -96,6 +103,7 @@ def evaluate(load_model_filepath):
                     ).clip(-kwargs['max_action'], kwargs['max_action'])
                 # Perform action
                 step_type, reward, discount, next_state = eval_env.step(action)
+                print('step', num_steps, reward, action)
                 next_frame_compressed = get_next_frame(eval_env)
                 done = step_type.last()
                 # Store data in replay buffer
@@ -126,6 +134,7 @@ def evaluate(load_model_filepath):
                                      plot_frames=args.plot_frames)
 
     eval_replay_buffer.shrink_to_last_step()
+    print('writing eval buffer: {}'.format(eval_step_filepath))
     pickle.dump(eval_replay_buffer, open(eval_step_filepath, 'wb'))
     # plot evaluation
     plotting.plot_replay_reward(eval_replay_buffer, eval_base, start_step=train_step, name_modifier='eval')
@@ -317,6 +326,7 @@ if __name__ == "__main__":
     parser.add_argument("--policy", default="TD3", help='Policy name (TD3, DDPG or OurDDPG)')
     parser.add_argument("--domain", default="jaco", help='DeepMind Control Suite domain name')
     parser.add_argument("--task", default="relative_position_reacher_7DOF", help='Deepmind Control Suite task name')
+    #parser.add_argument("--task", default="configurable_reacher", help='Deepmind Control Suite task name')
     parser.add_argument("--expl_noise", default=0.1, help='std of Gaussian exploration noise')
     parser.add_argument("--batch_size", default=256, type=int, help='batch size for training agent')
     parser.add_argument("--discount", default=0.99, help='discount factor')
@@ -324,8 +334,8 @@ if __name__ == "__main__":
     # training details
     parser.add_argument("--seed", default=0, type=int, help='random seed')
     parser.add_argument("--start_timesteps", default=25e3, type=int, help='number of time steps initial random policy is used')
-    parser.add_argument("--replay_size", default=int(2e6), type=int, help='number of steps to store in replay buffer')
-    parser.add_argument("--save_freq", default=50000, type=int, help='how often to save model and replay buffer')
+    parser.add_argument("--replay_size", default=int(10e6), type=int, help='number of steps to store in replay buffer')
+    parser.add_argument("--save_freq", default=20000, type=int, help='how often to save model and replay buffer')
     parser.add_argument("--max_timesteps", default=1e7, type=int, help='max time steps to train agent')
     parser.add_argument("--tau", default=0.005, help="Target network update rate")
     parser.add_argument("--policy_noise", default=0.2, help="Noise added to target policy during critic update")
@@ -348,8 +358,8 @@ if __name__ == "__main__":
     parser.add_argument("-ne", "--num_eval_episodes", default=10, type=int, help='')
     parser.add_argument("--state_pixels", default=False, action='store_true', help='return pixels from cameras for plotting')              
     parser.add_argument('-g', "--convert_to_gray", default=False, action='store_true', help='grayscale images')               
-    parser.add_argument("--frame_height", default=100)
-    parser.add_argument("--frame_width", default=120)
+    parser.add_argument("--frame_height", default=128)
+    parser.add_argument("--frame_width", default=128)
     parser.add_argument('-pm', "--plot_movie", default=False, action='store_true', help='write a movie of episodes')                 
     parser.add_argument('-pam', "--plot_action_movie", default=False, action='store_true', help='write a movie with state view, actions, rewards, and next state views')                 
     parser.add_argument('-pf', "--plot_frames", default=False, action='store_true', help='write a movie and individual frames')                 
@@ -374,10 +384,11 @@ if __name__ == "__main__":
     print("---------------------------------------")
     # info for particular task
     task_kwargs = {}
+    #task_kwargs = {'target_type':'fixed'}
     if args.domain == 'jaco':
         if args.fence_name == 'jodesk':
             # .1f is too low - joint 4 hit sometimes!!!!
-            task_kwargs['fence'] = {'x':(-.5,.5), 'y':(-1.0, .4), 'z':(.15, 1.2)}
+            task_kwargs['fence'] = {'x':(-.48,.48), 'y':(-1.0, .4), 'z':(.13, 1.2)}
         else:
             task_kwargs['fence'] = {'x':(-5,5), 'y':(-5, 5), 'z':(.15, 1.2)}
         if args.use_robot:
@@ -398,6 +409,9 @@ if __name__ == "__main__":
     else:
         if args.convert_to_gray:
             cam_dim = [args.frame_height, args.frame_width, 1]
+        # get topview and front view
+        elif args.camera_view == 'double':
+            cam_dim = [args.frame_height, args.frame_width*2, 3]
         else:
             cam_dim = [args.frame_height, args.frame_width, 3]
     # Set seeds

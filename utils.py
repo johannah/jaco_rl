@@ -1,3 +1,4 @@
+import os
 import copy
 import numpy as np
 import torch
@@ -7,6 +8,11 @@ import pickle
 
 # Implementation of Twin Delayed Deep Deterministic Policy Gradients (TD3)
 # Paper: https://arxiv.org/abs/1802.09477
+def seed_everything(seed=1234):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
 
 class BasePolicy():
     def __init__(

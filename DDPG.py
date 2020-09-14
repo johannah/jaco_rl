@@ -106,6 +106,12 @@ class DDPG(object):
         for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
             target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 
+    def get_loss_plot_data(self):
+        plot_dict =  {'critic':(self.loss_dict['step'], self.loss_dict['critic']), 
+                'actor':(self.loss_dict['step'], self.loss_dict['actor'])}
+        return plot_dict
+
+
 
     def save(self, filepath):
         model_dict =  {'critic':self.critic.state_dict(), 

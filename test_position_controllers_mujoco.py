@@ -76,13 +76,22 @@ def test_mujoco_controllers_absolute_step():
           
         num_steps = 0
         done = False
+        last_change = num_steps
         while not done:
-            if obs_angles[jt]-(2*args.relative_step_size) <= amins[jt]:
+            steps_change =  num_steps - last_change
+
+            if steps_change > 100:
+                print('switch')
+                direction = -direction
+                last_change = num_steps
+            elif obs_angles[jt]-(10*args.relative_step_size) <= amins[jt] and steps_change > 10:
                 direction = 1
                 print("direction", direction, action[jt], amins[jt], amaxes[jt])
-            if obs_angles[jt]+(2*args.relative_step_size) >= amaxes[jt]:
+                last_change = num_steps
+            elif obs_angles[jt]+(10*args.relative_step_size) >= amaxes[jt] and steps_change > 10:
                 direction = -1
                 print("direction", direction, action[jt], amins[jt], amaxes[jt])
+                last_change = num_steps
             action[jt] = obs_angles[jt] + args.relative_step_size*direction
             print('JT{}N{}A'.format(jt,num_steps),action)
             reward = 0
@@ -121,7 +130,7 @@ def test_mujoco_controllers_absolute_step():
 
         plotting.plot_states(last_steps, ebase, detail_dict=state_names_dict)
         plotting.plot_position_actions(last_steps, ebase, relative=args.relative_step)
-        plotting.plot_frames(emovie_path, eval_replay_buffer.get_last_steps(num_steps), plot_action_frames=True, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=True)
+        plotting.plot_frames(emovie_path, eval_replay_buffer.get_last_steps(num_steps), plot_action_frames=True, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=False)
         pickle.dump(eval_replay_buffer, open(ebase+'.epkl', 'wb'))
         plotting.plot_replay_reward(eval_replay_buffer, ebase, start_step=0, name_modifier='train')
 
@@ -256,7 +265,7 @@ def test_mujoco_controllers_relative_step():
 
         plotting.plot_states(last_steps, ebase, detail_dict=state_names_dict)
         plotting.plot_position_actions(last_steps, ebase, relative=args.relative_step)
-        plotting.plot_frames(emovie_path, eval_replay_buffer.get_last_steps(num_steps), plot_action_frames=True, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=True)
+        plotting.plot_frames(emovie_path, eval_replay_buffer.get_last_steps(num_steps), plot_action_frames=True, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=False)
         pickle.dump(eval_replay_buffer, open(ebase+'.epkl', 'wb'))
         plotting.plot_replay_reward(eval_replay_buffer, ebase, start_step=0, name_modifier='train')
 
@@ -289,14 +298,14 @@ if __name__ == "__main__":
     parser.add_argument("--eval_replay_size", default=int(10000), type=int, help='number of steps to store in replay buffer')
     parser.add_argument("-ne", "--num_eval_episodes", default=1, type=int, help='')
     parser.add_argument("--relative_step", default=False, action="store_true")
-    parser.add_argument("--relative_step_size", default=.05, type=np.float)
-    parser.add_argument("--episode_timelimit", default=20, type=np.float)
+    parser.add_argument("--relative_step_size", default=.1, type=np.float)
+    parser.add_argument("--episode_timelimit", default=3, type=np.float)
     parser.add_argument("--frame_height", default=400)
     parser.add_argument("--frame_width", default=480)
+    parser.add_argument("--start_position", default='out')
     #parser.add_argument("--time_limit", default=10)                 # Time in seconds allowed to complete mujoco task
     parser.add_argument('-cv', '--camera_view', default=-1, help='camera view to use.') 
     parser.add_argument('-efm', '--eval_filename_modifier', default='_robot')
-    parser.add_argument('-fn', '--fence_name', default='jodesk', help='virtual fence name that prevents jaco from leaving this region.')   # use gpu rather than cpu for computation
     parser.add_argument("--exp_name", default="pos_test")               
     parser.add_argument("--savedir", default="results", help='overall dir to store checkpoints')               
 
@@ -311,7 +320,8 @@ if __name__ == "__main__":
     # need to figure out min/max of all joints
     joint_env = suite.load(domain_name=domain, task_name=task, 
                       task_kwargs={'relative_step':False,
-                                   'degrees_of_freedom':13},  
+                                   'degrees_of_freedom':13, 
+                                   'start_position':args.start_position},  
                       environment_kwargs=environment_kwargs)
 
     amins = joint_env.action_spec().minimum
@@ -329,21 +339,17 @@ if __name__ == "__main__":
                    'fixed_target_position':args.fixed_target_position,
                    'target_type':'fixed',
                    'physics_type':'mujoco', 
-                    'episode_timelimit':args.episode_timelimit}
+                    'episode_timelimit':args.episode_timelimit, 
+                    'start_position':args.start_position}
 
-    cam_dim = [args.frame_height, args.frame_width, 3]
-    if args.fence_name == 'jodesk':
-        # .1f is too low - joint 4 hit sometimes!!!!
-        task_kwargs['fence'] = {'x':(-.5,.5), 'y':(-1.0, .4), 'z':(.15, 1.2)}
-    else:
-        task_kwargs['fence'] = {'x':(-5,5), 'y':(-5, 5), 'z':(.15, 1.2)}
+    task_kwargs['fence'] = {'x':(-10,10), 'y':(-10, 10), 'z':(-10, 10)}
 
 
     _env = suite.load(domain_name=domain, task_name=task, task_kwargs=task_kwargs,  environment_kwargs=environment_kwargs)
     kwargs = get_kwargs(_env)
     del _env
 
-    am_dim = [args.frame_height, args.frame_width, 3]
+    cam_dim = [args.frame_height, args.frame_width, 3]
 
     # Set seeds
     random_state = np.random.RandomState(seed)
