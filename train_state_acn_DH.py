@@ -1,3 +1,4 @@
+# warning - slow on gpu  - jaco torch functions need to be examined to determine why so slow on gpu
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -19,11 +20,15 @@ from acn_utils import tsne_plot
 from acn_utils import pca_plot
 from sklearn.cluster import KMeans
 from jaco import torchDHtransformer, DH_attributes_jaco27DOF,  find_joint_coordinate_extremes
+import time
 
 def run(train_cnt):
     log_ones = torch.zeros(batch_size, code_length).to(device)
+    st_tm = time.time()
     for dataset_view in range(10000):
-        print('starting', dataset_view)
+        print('starting epoch {}'.format(dataset_view))
+        print('last epoch took {:.2f} mins'.format((time.time()-st_tm)/60.0))
+        st_tm = time.time()
         for phase in ['valid', 'train']:
             indexes = np.arange(0, data_buffer[phase]['states'].shape[0])
             random_state.shuffle(indexes)
@@ -43,20 +48,27 @@ def run(train_cnt):
                 u_p, s_p = prior_model(u_q_flat)
                 #rec_state, z_e_x, z_q_x, latents = model.decode(u_q)
                 rec_state = model.acn_decode(u_q)
+                if args.use_DH:
+                    extremes = torch.FloatTensor(data_buffer[phase]['extremes'][batch_indexes]).to(device)
+                    rec_extremes = torch.stack([torch_dh.find_joint_coordinate_extremes(rec_state[x]) for x in range(states.shape[0])]).to(device)
+                    rec_loss = mse_loss(extremes[:,-1], rec_extremes[:,-1])*args.rec_weight
+                    rec_extremes.retain_grad()
+                else:
+                    rec_loss = mse_loss(states, rec_state)*(rec_state.shape[-1]*args.rec_weight)
+                rec_state.retain_grad()
                 kl = kl_loss_function(u_q, 
                                       log_ones,
                                       u_p, 
                                       s_p,
                                       reduction='mean')
-                
-                rec_loss = mse_loss(states, rec_state)*(rec_state.shape[-1]*rec_weight)
+ 
                 #vq_loss = mse_loss(z_q_x, z_e_x.detach())
                 #commit_loss = mse_loss(z_e_x, z_q_x.detach())*vq_commitment_beta
                 if phase == 'train':
                     clip_grad_value_(model.parameters(), 10)
                     clip_grad_value_(prior_model.parameters(), 10)
                     kl.backward(retain_graph=True)
-                    rec_loss.backward(retain_graph=True) 
+                    rec_loss.backward() 
                     #vq_loss.backward(retain_graph=True)
                     #commit_loss.backward(retain_graph=True)
                     opt.step()
@@ -67,7 +79,7 @@ def run(train_cnt):
             #losses[phase]['commit'].append(commit_loss.detach().cpu().item())
             losses[phase]['steps'].append(train_cnt)
 
-            if phase == 'train' and not dataset_view%100:
+            if phase == 'train' and not dataset_view%10:
                 model_dict = {'model':model.state_dict(), 
                               'prior_model':prior_model.state_dict(), 
                               'train_cnt':train_cnt, 
@@ -78,13 +90,11 @@ def run(train_cnt):
                 torch.save(model_dict, mpath)
                 torch.save(losses, lpath)
                 print('saving {}'.format(mpath))
-    embed() 
 
 def create_latent_file(phase, out_path):
     model.eval()
     prior_model.eval()
-    #if not os.path.exists(out_path+'.npz'):
-    if 1:
+    if not os.path.exists(out_path+'.npz'):
         sz = data_buffer[phase]['states'].shape[0]
         all_indexes = []; all_st = []
         all_rec_st = []
@@ -101,12 +111,13 @@ def create_latent_file(phase, out_path):
             u_p, s_p = prior_model(u_q_flat)
             #rec_st, z_e_x, z_q_x, latents = model.decode(u_q)
             rec_states = model.acn_decode(u_q)
-            rec_extremes = torch.stack([torch_dh.find_joint_coordinate_extremes(rec_states[x]) for x in range(states.shape[0])]).to(device)
+            rec_extremes = torch.stack([torch_dh.find_joint_coordinate_extremes(rec_states[x], torch_dh.base_tTall) for x in range(states.shape[0])]).to(device)
             neighbor_distances, neighbor_indexes = prior_model.kneighbors(u_q_flat, n_neighbors=num_k)
             all_st.extend(deepcopy(states.detach().cpu().numpy()))
-            all_rec_st.extend(deepcopy(rec_states.detach().cpu().numpy()))
             all_extremes.extend(deepcopy(data_buffer[phase]['extremes']))
             all_rec_extremes.extend(deepcopy(rec_extremes.detach().cpu().numpy()))
+            all_rec_st.extend(deepcopy(rec_states.detach().cpu().numpy()))
+
             all_acn_uq.extend(deepcopy(u_q.detach().cpu().numpy()))
             all_acn_sp.extend(deepcopy(s_p.detach().cpu().numpy()))
             ni = deepcopy(neighbor_indexes.detach().cpu().numpy())
@@ -186,8 +197,8 @@ def plot_latents(latent_train, latent_valid):
                 n_ext = find_joint_coordinate_extremes(DH_attributes_jaco27DOF, data['neighbors'][i][nn])
                 ax[1].scatter(n_ext[-1][0], n_ext[-1][1], s=n_ext[-1][2]*sscale, marker='o', color=blues[nn], alpha=0.5)
             ax[0].set_ylim(ymin, ymax)                    
-            ax[1].set_ylim(-.3, 1.3)                    
-            ax[1].set_xlim(-.3, .3)                    
+            ax[1].set_ylim(-.2, 1.3)                    
+            ax[1].set_xlim(-.25, .25)                    
             f.suptitle('TP:[{:.2f},{:.2f},{:.2f}]\nETP:[{:.2f},{:.2f},{:.2f}]\ndiff:[{:.2f},{:.2f},{:.2f}]'.format(ex[0],ex[1],ex[2],rec_ex[0],rec_ex[1],rec_ex[2],diff[0],diff[1],diff[2],))
             #plt.legend()
             pltname = os.path.join(pltdir, '%s_%05d.png'%(phase,i))
@@ -220,73 +231,14 @@ def plot_latents(latent_train, latent_valid):
         html_path = load_path.replace('.pt', param_name)
         pca_plot(X=X, images=images, color=color,
                      html_out_path=html_path, serve=False, img_size=cluster_img_size) 
- 
-#def plot_latents(latent_train, latent_valid):
-#    train_data = np.load(latent_train)
-#    valid_data = np.load(latent_valid)
-#    blues = plt.cm.Blues(np.linspace(0.2,.8,num_k))[::-1]
-#   
-#    ymin = train_data['st'].min()
-#    ymax = train_data['st'].max()
-#    for phase, data in [('train',train_data), ('valid',valid_data)]:
-# 
-#        images = []
-#        if args.plot_random:
-#            inds = random_state.randint(0, data['st'].shape[0], args.num_plot_examples).astype(np.int)
-#        
-#            pltdir = load_path.replace('.pt', '_plots_random_%s'%phase)
-#        else:
-#            inds = np.arange(0, min([args.num_plot_examples,data['st'].shape[0]])).astype(np.int)
-#            pltdir = load_path.replace('.pt', '_plots_time_%s'%phase)
-#        print('plotting to', pltdir)
-#
-#        if not os.path.exists(pltdir):
-#            os.makedirs(pltdir)
-#        for i in inds:
-#            plt.figure(figsize=(2,2))
-#            plt.plot(data['st'][i], label='data', lw=2, marker='x', color='mediumorchid')
-#            plt.plot(data['rec_st'][i], label='rec', lw=1.5, marker='o', color='blue')
-#            for nn, n in enumerate(data['neighbor_train_indexes'][i]):
-#                if nn in [0, num_k-1]: 
-#                    plt.plot(data['neighbors'][i][nn], label='k:%d i:%d'%(nn,n), lw=1., marker='.', color=blues[nn], alpha=.5)
-#                else:
-#                    plt.plot(data['neighbors'][i][nn], lw=1., marker='.', color=blues[nn], alpha=.5)
-#            plt.ylim(ymin, ymax)                    
-#            plt.title('%s'%i)
-#            #plt.legend()
-#            pltname = os.path.join(pltdir, '%s_%05d.png'%(phase,i))
-#            plt.legend()
-#            print('plotting %s'%pltname)
-#            plt.savefig(pltname)
-#            plt.close()
-#     
-#            images.append(plt.imread(pltname))
-#        images = np.array(images)
-#        pltsearch = os.path.join(pltdir, phase+'_*png')
-#        cmd = 'convert %s %s/_out.gif'%(pltsearch, pltdir)
-#        os.system(cmd)
-#        X = data['acn_uq'][inds]
-#        X = X.reshape(X.shape[0], -1)
-#        #km = KMeans(n_clusters=max([1,inds.shape[0]//3]))
-#        #y = km.fit_predict(latents['st'][inds,0,0])
-#        # color points based on clustering, label, or index
-#        color = inds
-#        perplexity = 10
-#        param_name = '_tsne_%s_P%s.html'%(phase, perplexity)
-#        html_path = load_path.replace('.pt', param_name)
-#        tsne_plot(X=X, images=images, color=color,
-#                      perplexity=perplexity,
-#                      html_out_path=html_path, serve=False, img_size=cluster_img_size)
-#        param_name = '_pca_%s.html'%(phase)
-#        html_path = load_path.replace('.pt', param_name)
-#        pca_plot(X=X, images=images, color=color,
-#                     html_out_path=html_path, serve=False, img_size=cluster_img_size) 
-#        
+        
 
 if __name__ == '__main__':
     import argparse
+    from datetime import date
     parser = argparse.ArgumentParser()
     parser.add_argument('--plot', default=False, action='store_true')
+    parser.add_argument('--use_DH', default=False, action='store_true')
     parser.add_argument('--load_model', default='')
     parser.add_argument('--device', default='cpu')
     parser.add_argument('--savedir', default='models')
@@ -294,22 +246,27 @@ if __name__ == '__main__':
     parser.add_argument('--eval', default=False, action='store_true')
     parser.add_argument('--plot_random', default=False, action='store_true')
     parser.add_argument('--num_plot_examples', default=256)
+    parser.add_argument('--rec_weight', type=float, default=4000)
     cluster_img_size = (120,120) 
-    rec_weight = 100
     random_state = np.random.RandomState(0)
+    today = date.today()
+    today_str = today.strftime("%y-%m-%d")
     try:
         args = parser.parse_args()
     except:
         parser.print_help()
         sys.exit()
 
-
     if args.load_model == '':
         cnt = 0
-        savebase = os.path.join(args.savedir, args.exp_name+'_%02d'%cnt)
-        if len(glob(os.path.join(savebase, '*.pt'))):
+        exp_desc = 'lin' 
+        if args.use_DH:
+            exp_desc = exp_desc+"DH"
+      
+        savebase = os.path.join(args.savedir, today_str+exp_desc+args.exp_name+'_%02d'%cnt)
+        while len(glob(os.path.join(savebase, '*.pt'))):
             cnt += 1
-            savebase = os.path.join(args.savedir, args.exp_name+'_%02d'%cnt)
+            savebase = os.path.join(args.savedir, today_str+exp_desc+args.exp_name+'_%02d'%cnt)
         if not os.path.exists(savebase):
             os.makedirs(savebase)
         if not os.path.exists(os.path.join(savebase, 'python')):
@@ -317,6 +274,7 @@ if __name__ == '__main__':
         os.system('cp *.py %s/python'%savebase)
     else:
         savebase = os.path.split(args.load_model)[0]
+    print('savebase: {}'.format(savebase))
 
 
     valid_fname = 'datasets/test_TD3_jaco_00000_0001140000_eval_CAM-1_S_S1140000_E0010_position.npz'
@@ -330,6 +288,7 @@ if __name__ == '__main__':
     num_k = 5
     device = args.device
     torch_dh = torchDHtransformer(DH_attributes_jaco27DOF, device)
+
     #losses = {
     #          'train':{'kl':[],'rec':[],'vq':[],'commit':[],'steps':[]},
     #          'valid':{'kl':[],'rec':[],'vq':[],'commit':[],'steps':[]}
