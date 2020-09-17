@@ -72,7 +72,10 @@ class torchDHtransformer():
         self.device = device
         self.tdh_dict = get_torch_attributes(np_attribute_dict, device=self.device)
         
-        self.base_tTall = Variable(torch.FloatTensor([[1,0,0,0],[0,-1,0,0],[0,0,-1,0],[0,0,0,1]]).to(device), requires_grad=True)
+        self.base_tTall = Variable(torch.FloatTensor([[1,0,0,0],
+                                                      [0,-1,0,0],
+                                                      [0,0,-1,0],
+                                                      [0,0,0,1]]).to(device), requires_grad=True)
 
 
     def find_joint_coordinate_extremes(self, tmajor_joint_angles, base_tTall, return_T=False, angle_dh_indexes=[]):
@@ -80,6 +83,7 @@ class torchDHtransformer():
         major_joint_angles: ordered list of joint angles in radians (len 7 for 7DOF arm)"""
         device = tmajor_joint_angles.device
         extreme_xyz = torch.zeros((tmajor_joint_angles.shape[0],3)).to(device)
+        Ts = []
         if len(angle_dh_indexes) == 0:
             # assume we start indexing dh at 0
             angle_dh_indexes = [x for x in range(len(tmajor_joint_angles))]
@@ -92,6 +96,7 @@ class torchDHtransformer():
         extreme_xyz[outi,0] = extreme_xyz[outi,0] + tTall[0,3]
         extreme_xyz[outi,1] = extreme_xyz[outi,1] + tTall[1,3] 
         extreme_xyz[outi,2] = extreme_xyz[outi,2] + tTall[2,3]
+        Ts.append(T)
       
        
         for outi, i in enumerate(angle_dh_indexes[1:]):
@@ -99,11 +104,12 @@ class torchDHtransformer():
             DH_theta = self.tdh_dict['DH_theta_sign'][i]*tmajor_joint_angles[outi] + self.tdh_dict['DH_theta_offset'][i]
             T = torch_DHtransform(self.tdh_dict['DH_d'][i], DH_theta, self.tdh_dict['DH_a'][i], self.tdh_dict['DH_alpha'][i])
             tTall = torch.matmul(tTall,T)
+            Ts.append(tTall)
             extreme_xyz[outi,0] = extreme_xyz[outi,0] + tTall[0,3]
             extreme_xyz[outi,1] = extreme_xyz[outi,1] + tTall[1,3] 
             extreme_xyz[outi,2] = extreme_xyz[outi,2] + tTall[2,3]
         if return_T:
-            return extreme_xyz, tTall
+            return extreme_xyz, Ts
         else:
             return extreme_xyz
 
@@ -194,11 +200,6 @@ DH_attributes_jaco27DOF = {
                     0, 
                     -(jaco27DOF_DH_lengths['D6']+jaco27DOF_DH_lengths['D7']))
            }
- 
-cuda0_base_tTall = Variable(torch.FloatTensor([[1,0,0,0],[0,-1,0,0],[0,0,-1,0],[0,0,0,1]]).to('cuda:0'), requires_grad=True)
-cuda1_base_tTall = Variable(torch.FloatTensor([[1,0,0,0],[0,-1,0,0],[0,0,-1,0],[0,0,0,1]]).to('cuda:1'), requires_grad=True)
-
-
 
 if __name__ == '__main__':
     from replay_buffer import ReplayBuffer, compress_frame
@@ -214,15 +215,15 @@ if __name__ == '__main__':
     states = sbuffer.states[:sbuffer.size,3:3+7] 
 
     st = time.time()
-    #test_torch_extremes(states, device='cuda:1')
+    #test_torch_extremes(states, device='cuda:0')
     #print('gpu test took', time.time()-st)
     #st = time.time()
-    #test_torch_extremes(states, device='cuda:1')
+    #test_torch_extremes(states, device='cuda:0')
     #print('gpu test took', time.time()-st)
     st = time.time()
-    #test_torch_extremes(states, device='cpu')
-    #print('cpu test took', time.time()-st)
-    test_torch_partial_extremes(states, device='cpu')
+    test_torch_extremes(states, device='cpu')
+    print('cpu test took', time.time()-st)
+    #test_torch_partial_extremes(states, device='cpu')
 
 
 
