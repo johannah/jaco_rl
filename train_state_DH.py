@@ -17,10 +17,14 @@ from torchvision import transforms
 from torch.nn.utils.clip_grad import clip_grad_value_
 from models import AngleAutoEncoder
 import time
-from jaco import torchDHtransformer, DH_attributes_jaco27DOF, get_torch_attributes
+from plotting import plot_rec_losses, plot_rec_results
+from jaco import torchDHtransformer, DH_attributes_jaco27DOF, get_torch_attributes, find_joint_coordinate_extremes
 
-def torch_DHtransform(d,theta,a,alpha):
-    # need to add DH params individually to get grad thru - creating new float tensor didnt work
+def torch_dh_transform(dh_index,angle):
+    theta = tdh['DH_theta_sign'][dh_index]*angle+tdh['DH_theta_offset'][dh_index]
+    d = tdh['DH_d'][dh_index]
+    a = tdh['DH_a'][dh_index]
+    alpha = tdh['DH_alpha'][dh_index]
     T = torch.zeros((4,4), device='cpu')
     T[0,0] = T[0,0] +  torch.cos(theta)
     T[0,1] = T[0,1] + -torch.sin(theta)*torch.cos(alpha)
@@ -43,7 +47,7 @@ def torch_DHtransform(d,theta,a,alpha):
 
 def run(train_cnt):
     st_tm = time.time()
-    for dataset_view in range(10000):
+    for dataset_view in range(train_cnt//batch_size, 10000000):
         print('starting epoch {}'.format(dataset_view))
         print('last epoch took {:.2f} mins'.format((time.time()-st_tm)/60.0))
         st_tm = time.time()
@@ -57,63 +61,47 @@ def run(train_cnt):
                 states = torch.FloatTensor(data_buffer[phase]['states'][batch_indexes]).to(device)
                 extremes = torch.FloatTensor(data_buffer[phase]['extremes'][batch_indexes,6]).to(device)
                 # predict angle 6
-                rec_angle = np.pi*torch.tanh(model(states[:,:6], extremes))
+                rec_angle = np.pi*(torch.tanh(model(states[:,:3], extremes))+1)
 
-                true_angle = states[:,6]
-                # do dh on cpu
-              
-                T4 = torch.FloatTensor(data_buffer[phase]['Ts'][batch_indexes,4]).to('cpu')
-                T5 = torch.FloatTensor(data_buffer[phase]['Ts'][batch_indexes,5]).to('cpu')
-                T6 = torch.FloatTensor(data_buffer[phase]['Ts'][batch_indexes,6]).to('cpu')
- 
-                T_pred = torch.zeros((batch_indexes.shape[0], 2, 4, 4)).to('cpu')
-                T_true = torch.stack((T5,T6), 1) .to(device)
+                T2 = torch.FloatTensor(data_buffer[phase]['Ts'][batch_indexes,2]).to('cpu')
+                ext_pred = torch.zeros((batch_indexes.shape[0], 3)).to('cpu')
         
                 for x in range(batch_indexes.shape[0]):
-                    DH_theta5 = tdh['DH_theta_sign'][5]*rec_angle[x]+tdh['DH_theta_offset'][6]
-                    #DH_theta5 = tdh['DH_theta_sign'][6]*states[x,5]+tdh['DH_theta_offset'][6]
-                    _T5 = torch_DHtransform(tdh['DH_d'][5], DH_theta5, tdh['DH_a'][5], tdh['DH_alpha'][5])
-                    _T5.to('cpu')
- 
-                    T5_pred = torch.matmul(T4[x],_T5)
-                    T_pred[x,0] = T_pred[x,0] + T5_pred
+                    _T3 = torch_dh_transform(3, rec_angle[x,0])
+                    T3_pred = torch.matmul(T2[x],_T3)
 
-                    DH_theta6 = tdh['DH_theta_sign'][6]*states[x,6]+tdh['DH_theta_offset'][6]
-                    #DH_theta6 = tdh['DH_theta_sign'][6]*true_angle[x]+tdh['DH_theta_offset'][6]
-                    _T6 = torch_DHtransform(tdh['DH_d'][6], DH_theta6, tdh['DH_a'][6], tdh['DH_alpha'][6])
-                    _T6.to('cpu')
- 
+                    _T4 = torch_dh_transform(4, rec_angle[x,1])
+                    T4_pred = torch.matmul(T3_pred,_T4)
+
+                    _T5 = torch_dh_transform(5, rec_angle[x,2])
+                    T5_pred = torch.matmul(T4_pred,_T5)
+
+                    _T6 = torch_dh_transform(6, states[x,6])
                     T6_pred = torch.matmul(T5_pred,_T6)
-                    T_pred[x,1] = T_pred[x,1] + T6_pred
 
-
-                # TODO fix X
-                rec_loss = mse_loss(T_true, T_pred.to(device))
-                #rec_loss = mse_loss(extremes,extreme_ends)
-                #rec_loss = mse_loss(states[:,5],rec_angle)
-                #rec_angle.retain_grad()
-                #T_pred.retain_grad()
-                #T5_pred.retain_grad()
-                #T6_pred.retain_grad()
+                    ext_pred[x] = ext_pred[x] + T6_pred[:3,3]
+ 
+                rec_loss = mse_loss(extremes, ext_pred.to(device))
                 if phase == 'train':
                     clip_grad_value_(model.parameters(), 5)
                     rec_loss.backward() 
                     opt.step()
                     train_cnt += batch_size 
 
-            losses[phase]['rec'].append(rec_loss.detach().cpu().item())
-            losses[phase]['steps'].append(train_cnt)
+                if st == 0:
+                    losses[phase]['rec'].append(rec_loss.detach().cpu().item())
+                    losses[phase]['steps'].append(train_cnt)
 
-            if phase == 'train' and not dataset_view%args.save_every_epochs:
-                model_dict = {'model':model.state_dict(), 
-                              'train_cnt':train_cnt, 
-                              'losses':losses
-                            }
-                mpath = os.path.join(savebase, 'model_%012d.pt'%train_cnt)
-                lpath = os.path.join(savebase, 'model_%012d.losses'%train_cnt)
-                torch.save(model_dict, mpath)
-                torch.save(losses, lpath)
-                print('saving {}'.format(mpath))
+                    if phase == 'train' and not dataset_view%args.save_every_epochs:
+                        model_dict = {'model':model.state_dict(), 
+                                      'train_cnt':train_cnt, 
+                                      'losses':losses
+                                    }
+                        mpath = os.path.join(savebase, 'model_%012d.pt'%train_cnt)
+                        lpath = os.path.join(savebase, 'model_%012d.losses'%train_cnt)
+                        torch.save(model_dict, mpath)
+                        torch.save(losses, lpath)
+                        print('saving {}'.format(mpath))
 
 def create_results_file(phase, out_path):
     model.eval()
@@ -122,52 +110,45 @@ def create_results_file(phase, out_path):
         all_indexes = []; all_st = []
         all_rec_st = []
         all_rec_extremes = []; all_extremes = []
-        frames = []; next_frames = []
+        frames = []; next_frames = []; all_diffs = []
         for i in range(0,sz,batch_size):
             batch_indexes = np.arange(i, min([i+batch_size, sz]))
-
             states = torch.FloatTensor(data_buffer[phase]['states'][batch_indexes]).to(device)
-            extremes = torch.FloatTensor(data_buffer[phase]['extremes'][batch_indexes, 6]).to(device)
+            extremes = torch.FloatTensor(data_buffer[phase]['extremes'][batch_indexes,6]).to(device)
 
-            # predict angle 6
-            rec_angle = np.pi*torch.tanh(model(states[:,:6], extremes))
+            rec_angle = np.pi*(torch.tanh(model(states[:,:3], extremes))+1)
 
-            true_angle = states[:,6]
-            # do dh on cpu
-            
-            T4 = torch.FloatTensor(data_buffer[phase]['Ts'][batch_indexes,4]).to('cpu')
-            T5 = torch.FloatTensor(data_buffer[phase]['Ts'][batch_indexes,5]).to('cpu')
-            T6 = torch.FloatTensor(data_buffer[phase]['Ts'][batch_indexes,6]).to('cpu')
- 
-            T_pred = torch.zeros((batch_indexes.shape[0], 2, 4, 4)).to('cpu')
-            T_true = torch.stack((T5,T6), 1) .to(device)
+            T2 = torch.FloatTensor(data_buffer[phase]['Ts'][batch_indexes,2]).to('cpu')
+            ext_pred = torch.zeros((batch_indexes.shape[0], 3)).to('cpu')
         
             for x in range(batch_indexes.shape[0]):
-                DH_theta5 = tdh['DH_theta_sign'][5]*rec_angle[x]+tdh['DH_theta_offset'][6]
-                #DH_theta5 = tdh['DH_theta_sign'][6]*states[x,5]+tdh['DH_theta_offset'][6]
-                _T5 = torch_DHtransform(tdh['DH_d'][5], DH_theta5, tdh['DH_a'][5], tdh['DH_alpha'][5])
-                _T5.to('cpu')
- 
-                T5_pred = torch.matmul(T4[x],_T5)
-                T_pred[x,0] = T_pred[x,0] + T5_pred
+                _T3 = torch_dh_transform(3, rec_angle[x,0])
+                T3_pred = torch.matmul(T2[x],_T3)
 
-                DH_theta6 = tdh['DH_theta_sign'][6]*states[x,6]+tdh['DH_theta_offset'][6]
-                #DH_theta6 = tdh['DH_theta_sign'][6]*true_angle[x]+tdh['DH_theta_offset'][6]
-                _T6 = torch_DHtransform(tdh['DH_d'][6], DH_theta6, tdh['DH_a'][6], tdh['DH_alpha'][6])
-                _T6.to('cpu')
- 
+                _T4 = torch_dh_transform(4, rec_angle[x,1])
+                T4_pred = torch.matmul(T3_pred,_T4)
+
+                _T5 = torch_dh_transform(5, rec_angle[x,2])
+                T5_pred = torch.matmul(T4_pred,_T5)
+
+                _T6 = torch_dh_transform(6, states[x,6])
                 T6_pred = torch.matmul(T5_pred,_T6)
-                T_pred[x,1] = T_pred[x,1] + T6_pred
 
-
+                ext_pred[x] = ext_pred[x] + T6_pred[:3,3]
+ 
+            extremes = data_buffer[phase]['extremes'][batch_indexes,6]
             states = states.detach().cpu().numpy()
             rec_st = deepcopy(states)
-            rec_st[:,5] = rec_angle.detach().cpu().numpy()[:,0]
+            rec_st[:,4:6] = rec_angle.detach().cpu().numpy()
+            rec_ex = ext_pred.detach().cpu().numpy()
 
             all_st.extend(states)
-            all_extremes.extend(deepcopy(data_buffer[phase]['extremes'][:,6]))
-            all_rec_extremes.extend(deepcopy(T_pred[:,1,:3, 3].detach().cpu().numpy()))
+            all_extremes.extend(extremes)
             all_rec_st.extend(rec_st)
+            all_rec_extremes.extend(rec_ex)
+            diff = np.sqrt(((extremes-rec_ex)**2).sum(axis=1))
+            all_diffs.extend(diff)
+ 
         print("creating %s results file: %s with %s examples"%(phase, out_path+'.npz', len(all_st)))
         np.savez(out_path,
                  index=all_indexes,
@@ -175,71 +156,10 @@ def create_results_file(phase, out_path):
                  rec_st=all_rec_st,
                  ex=all_extremes,
                  rec_ex=all_rec_extremes,
+                 diffs=all_diffs
                 ) 
 
 
-def plot_losses():
-    plt_base = load_path.replace('.pt', '')
-    plt.figure()
-    for lparam in losses['train'].keys():
-        if lparam != 'steps':
-            plt.plot(losses['train']['steps'][1:], losses['train'][lparam][1:], label='tr %s'%lparam, marker='x')
-            plt.plot(losses['valid']['steps'][1:], losses['valid'][lparam][1:], label='va %s'%lparam, marker='o')
-    plt.title('losses')
-    plt.legend()
-    plt.savefig(plt_base+'_losses.png')
-    plt.close()
-
-def plot_results(results_fpath, phase):
-    data = np.load(results_fpath)
-    ymin = data['st'].min()
-    ymax = data['st'].max()
-    images = []
-    if args.plot_random:
-        inds = random_state.randint(0, data['st'].shape[0], args.num_plot_examples).astype(np.int)
-    
-        pltdir = load_path.replace('.pt', '_plots_random_%s'%phase)
-    else:
-        inds = np.arange(0, min([args.num_plot_examples,data['st'].shape[0]])).astype(np.int)
-        pltdir = load_path.replace('.pt', '_plots_time_%s'%phase)
-    print('plotting to', pltdir)
-
-    if not os.path.exists(pltdir):
-        os.makedirs(pltdir)
-    sscale = 50
-    diffs = []
-    for i in inds:
-        f,ax = plt.subplots(1,2,figsize=(8,5))
-        ex = data['ex'][i]
-        rec_ex = data['rec_ex'][i]
-        diff = np.square(ex-rec_ex)
-        diffs.append(diff)
- 
-        ax[0].plot(data['st'][i], label='data', lw=2, marker='x', color='mediumorchid')
-        ax[0].plot(data['rec_st'][i], label='rec', lw=1.5, marker='o', color='blue')
-
-        ax[1].scatter(ex[0], ex[1], s=ex[2]*sscale, marker='o', color='mediumorchid')
-        ax[1].scatter(rec_ex[0], rec_ex[1], s=rec_ex[2]*sscale, marker='o', color='blue')
-        ax[0].set_ylim(ymin, ymax)                    
-        ax[1].set_ylim(-.3, 1.3)                    
-        ax[1].set_xlim(-.3, .3)                    
-        f.suptitle('TP:[{:.2f},{:.2f},{:.2f}]\nETP:[{:.2f},{:.2f},{:.2f}]\ndiff:[{:.2f},{:.2f},{:.2f}]'.format(ex[0],ex[1],ex[2],rec_ex[0],rec_ex[1],rec_ex[2],diff[0],diff[1],diff[2],))
-        #plt.legend()
-        pltname = os.path.join(pltdir, '%s_%05d.png'%(phase,i))
-        ax[0].legend()
-        print('plotting %s'%pltname)
-        plt.savefig(pltname)
-        plt.close()
-    
-        images.append(plt.imread(pltname))
-        plt.figure()
-        plt.plot(diffs)
-        plt.savefig(load_path.replace('.pt', phase+'_TPdiff.png'))
-        plt.close()
-    images = np.array(images)
-    pltsearch = os.path.join(pltdir, phase+'_*png')
-    cmd = 'convert %s %s/_out.gif'%(pltsearch, pltdir)
-    os.system(cmd)
 
 if __name__ == '__main__':
     import argparse
@@ -253,7 +173,7 @@ if __name__ == '__main__':
     parser.add_argument('--eval', default=False, action='store_true')
     parser.add_argument('--plot_random', default=False, action='store_true')
     parser.add_argument('--num_plot_examples', default=256)
-    parser.add_argument('--save_every_epochs', default=100)
+    parser.add_argument('--save_every_epochs', default=1)
     parser.add_argument('--rec_weight', type=float, default=4000)
     batch_size = 256
     random_state = np.random.RandomState(0)
@@ -267,7 +187,7 @@ if __name__ == '__main__':
 
     if args.load_model == '':
         cnt = 0
-        exp_desc = 'ae5' 
+        exp_desc = 'aepos45normlr1e4' 
         exp_desc = exp_desc+"DH"
       
         savebase = os.path.join(args.savedir, today_str+exp_desc+args.exp_name+'_%02d'%cnt)
@@ -284,8 +204,8 @@ if __name__ == '__main__':
     print('savebase: {}'.format(savebase))
 
 
-    valid_fname = 'datasets/test_TD3_jaco_00000_0001140000_eval_CAM-1_S_S1140000_E0010_position.npz'
-    train_fname = 'datasets/test_TD3_jaco_00000_0001160000_eval_CAM-1_S_S1160000_E0100_position.npz'
+    valid_fname = 'datasets/test_TD3_jaco_00000_0001140000_eval_CAM-1_S_S1140000_E0010_position_norm.npz'
+    train_fname = 'datasets/sep8randomClose_TD3_jaco_00000_0000600000_position_norm.npz'
     data_buffer = {}
     data_buffer['train'] = np.load(train_fname)
     data_buffer['valid'] = np.load(valid_fname)
@@ -301,7 +221,7 @@ if __name__ == '__main__':
  
     train_size,state_size = data_buffer['train']['states'].shape
     valid_size = data_buffer['valid']['states'].shape[0]
-    model = AngleAutoEncoder(input_size=6, output_size=1).to(device)
+    model = AngleAutoEncoder(input_size=3, output_size=3).to(device)
     print("setting up with training size {}".format(train_size))
     train_cnt = 0
     if args.load_model != '':
@@ -323,16 +243,16 @@ if __name__ == '__main__':
         model.load_state_dict(model_dict['model'])
         train_cnt = model_dict['train_cnt']
     if args.plot:
-        plot_losses()
+        plot_rec_losses(load_path, losses)
         for phase in ['valid', 'train']:
             create_results_file(phase, results_base+phase)
         print('plot results')
-        plot_results(results_base+'train.npz', 'train')
-        plot_results(results_base+'valid.npz', 'valid')
+        plot_rec_results(results_base+'train.npz', 'train', random_indexes=args.plot_random, num_plot_examples=args.num_plot_examples)
+        plot_rec_results(results_base+'valid.npz', 'valid', random_indexes=args.plot_random, num_plot_examples=args.num_plot_examples)
     else:
         mse_loss = nn.MSELoss(reduction='mean')
         parameters = []
         parameters+=list(model.parameters())
-        opt = optim.Adam(parameters, lr=1e-6)
+        opt = optim.Adam(parameters, lr=1e-4)
         run(train_cnt)
 

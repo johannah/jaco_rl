@@ -61,23 +61,24 @@ def run(train_cnt):
                     #commit_loss.backward(retain_graph=True)
                     opt.step()
                     train_cnt += batch_size 
-            losses[phase]['kl'].append(kl.detach().cpu().item())
-            losses[phase]['rec'].append(rec_loss.detach().cpu().item())
-            #losses[phase]['vq'].append(vq_loss.detach().cpu().item())
-            #losses[phase]['commit'].append(commit_loss.detach().cpu().item())
-            losses[phase]['steps'].append(train_cnt)
+            if not st:
+                losses[phase]['kl'].append(kl.detach().cpu().item())
+                losses[phase]['rec'].append(rec_loss.detach().cpu().item())
+                #losses[phase]['vq'].append(vq_loss.detach().cpu().item())
+                #losses[phase]['commit'].append(commit_loss.detach().cpu().item())
+                losses[phase]['steps'].append(train_cnt)
 
-            if phase == 'train' and not dataset_view%100:
-                model_dict = {'model':model.state_dict(), 
-                              'prior_model':prior_model.state_dict(), 
-                              'train_cnt':train_cnt, 
-                              'losses':losses
-                            }
-                mpath = os.path.join(savebase, 'model_%012d.pt'%train_cnt)
-                lpath = os.path.join(savebase, 'model_%012d.losses'%train_cnt)
-                torch.save(model_dict, mpath)
-                torch.save(losses, lpath)
-                print('saving {}'.format(mpath))
+                if phase == 'train' and not dataset_view%100:
+                    model_dict = {'model':model.state_dict(), 
+                                  'prior_model':prior_model.state_dict(), 
+                                  'train_cnt':train_cnt, 
+                                  'losses':losses
+                                }
+                    mpath = os.path.join(savebase, 'model_%012d.pt'%train_cnt)
+                    lpath = os.path.join(savebase, 'model_%012d.losses'%train_cnt)
+                    torch.save(model_dict, mpath)
+                    torch.save(losses, lpath)
+                    print('saving {}'.format(mpath))
     embed() 
 
 def create_latent_file(phase, out_path):
@@ -169,7 +170,7 @@ def plot_latents(latent_train, latent_valid):
             f,ax = plt.subplots(1,2,figsize=(8,5))
             ex = data['ex'][i][-1]
             rec_ex = data['rec_ex'][i][-1]
-            diff = np.square(ex-rec_ex)
+            diff = np.sqrt(((extremes-rec_ex)**2).sum(axis=1))
             diffs.append(diff)
  
             ax[0].plot(data['st'][i], label='data', lw=2, marker='x', color='mediumorchid')

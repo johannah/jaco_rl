@@ -11,6 +11,104 @@ from IPython import embed
 import numpy as np
 np.set_printoptions(precision=3, suppress=True)
 
+def plot_rec_losses(load_path, losses):
+    plt_base = load_path.replace('.pt', '')
+    plt.figure()
+    for lparam in losses['train'].keys():
+        if lparam != 'steps':
+            plt.plot(losses['train']['steps'][1:], losses['train'][lparam][1:], label='tr %s'%lparam, marker='x')
+            plt.plot(losses['valid']['steps'][1:], losses['valid'][lparam][1:], label='va %s'%lparam, marker='o')
+    plt.title('losses')
+    plt.legend()
+    plt.savefig(plt_base+'_losses.png')
+    plt.close()
+
+def plot_rec_results(results_fpath, phase, random_indexes=False, seed=10, num_plot_examples=256, plot_neighbors=0):
+    
+    data = np.load(results_fpath)
+    ymin = min([data['st'].min(), data['rec_st'].min()])-.1
+    ymax = max([data['st'].max(), data['rec_st'].max()])+.1
+    exmin = min([data['ex'][:,0].min(), data['rec_ex'][:,0].min()])-.1
+    exmax = max([data['ex'][:,0].max(), data['rec_ex'][:,0].max()])+.1
+    eymin = min([data['ex'][:,1].min(), data['rec_ex'][:,1].min()])-.1
+    eymax = max([data['ex'][:,1].max(), data['rec_ex'][:,1].max()])+.1
+ 
+    if plot_neighbors: 
+        blues = plt.cm.Blues(np.linspace(0.2,.8,plot_neighbors))[::-1]
+
+    if random_indexes:
+        random_state = np.random.RandomState(seed)
+        inds = random_state.randint(0, data['st'].shape[0], num_plot_examples).astype(np.int)
+    
+        pltdir = results_fpath.replace('.npz', '_plots_random_%s'%phase)
+    else:
+        inds = np.arange(0, min([num_plot_examples,data['st'].shape[0]])).astype(np.int)
+        pltdir = results_fpath.replace('.npz', '_plots_time_%s'%phase)
+
+
+
+    print('plotting to', pltdir)
+
+    if not os.path.exists(pltdir):
+        os.makedirs(pltdir)
+
+    sscale = 50
+    diff = data['diffs']
+    plt.figure()
+    plt.plot(diff)
+    plt.title('diff max:%.02f min:%.02f mean:%.02f std:%.02f'%(diff.max(), diff.min(), diff.mean(), diff.std()))
+    plt.savefig(results_fpath.replace('.npz', '_'+phase+'_TP_dis.png'))
+    plt.close()
+
+
+    #plt.figure()
+    #plt.plot(data['diffs'])
+    #plt.title('Diff Max:%.02f Min:%.02f'%(diff.max(), diff.min()))
+    #plt.savefig(results_fpath.replace('.npz', '_'+phase+'_TP_xyz_sqdis.png'))
+    #plt.close()
+    sscale = 100
+    for num,i in enumerate(inds):
+        pltname = os.path.join(pltdir, '%s_%04d.png'%(phase,num))
+        #if os.path.exists(pltname):
+        #    print('skipping %s'%pltname)
+        #else:
+        if 1:
+            f,ax = plt.subplots(1,2,figsize=(8,5))
+            ex = data['ex'][i]
+            rec_ex = data['rec_ex'][i]
+ 
+            ax[0].plot(data['st'][i], label='data', lw=2, marker='x', color='mediumorchid')
+            ax[0].plot(data['rec_st'][i], label='rec', lw=1.5, marker='o', color='blue')
+
+            ax[1].scatter(ex[0], ex[1], s=min([ex[2],.1])*sscale, marker='o', color='mediumorchid')
+            ax[1].scatter(rec_ex[0], rec_ex[1], s=min([.1,rec_ex[2]])*sscale, marker='o', color='blue')
+            ax[0].set_ylim(ymin, ymax)                    
+            ax[1].set_ylim(eymin, eymax)                    
+            ax[1].set_xlim(exmin, exmax)                    
+            if plot_neighbors:
+                for nn, n in enumerate(data['neighbor_train_indexes'][i]):
+                    if nn in [0, data['num_k']-1]: 
+                        ax[0].plot(data['train_st'][n], label='k:%d i:%d'%(nn,n), lw=1., marker='.', color=blues[nn], alpha=.5)
+                    else:
+                        ax[0].plot(data['train_st'][n], lw=1., marker='.', color=blues[nn], alpha=.5)
+                    ax[1].scatter(data['train_ex'][n][0], data['train_ex'][n][1], s=sscale*min([data['train_ex'][n][2],.1]), color=blues[nn])
+ 
+
+            #f.suptitle('TP:[{:.2f},{:.2f},{:.2f}]\nETP:[{:.2f},{:.2f},{:.2f}]\ndiff:[{:.2f},{:.2f},{:.2f}],dis {:.2f}'.format(ex[0],ex[1],ex[2],rec_ex[0],rec_ex[1],rec_ex[2],d[0],d[1],d[2],diff[i]))
+            f.suptitle('{} TP:[{:.2f},{:.2f},{:.2f}]\nETP:[{:.2f},{:.2f},{:.2f}]\ndis {:.2f}'.format(i,ex[0],ex[1],ex[2],rec_ex[0],rec_ex[1],rec_ex[2],diff[i]))
+ 
+            #plt.legend()
+            ax[0].legend()
+            print('plotting %s'%pltname)
+            plt.savefig(pltname)
+            plt.close()
+    
+    pltsearch = os.path.join(pltdir, phase+'_%04d.png')
+    outpath = os.path.join(pltdir, '_%s.mp4'%phase)
+    cmd = 'ffmpeg -r 10 -f image2 -i %s -vcodec libx264 -crf 25 -pix_fmt yuv420p %s -y'%(pltsearch, outpath)
+    print("calling: {}".format(cmd))
+    os.system(cmd)
+
 def plot_loss_dict(policy, load_model_base):
     loss_plot_path = load_model_base + '_loss.png'
     loss_dict = policy.get_loss_plot_data()

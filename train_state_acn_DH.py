@@ -21,6 +21,38 @@ from acn_utils import pca_plot
 from sklearn.cluster import KMeans
 from jaco import torchDHtransformer, DH_attributes_jaco27DOF,  find_joint_coordinate_extremes
 import time
+from plotting import plot_rec_losses, plot_rec_results
+from jaco import torchDHtransformer, DH_attributes_jaco27DOF, get_torch_attributes, find_joint_coordinate_extremes
+from plotting import plot_rec_losses, plot_rec_results
+torch_dh = torchDHtransformer(DH_attributes_jaco27DOF, 'cpu')
+tdh = get_torch_attributes(DH_attributes_jaco27DOF, 'cpu')
+dh = DH_attributes_jaco27DOF
+
+def torch_dh_transform(dh_index,angle):
+    theta = tdh['DH_theta_sign'][dh_index]*angle+tdh['DH_theta_offset'][dh_index]
+    d = tdh['DH_d'][dh_index]
+    a = tdh['DH_a'][dh_index]
+    alpha = tdh['DH_alpha'][dh_index]
+    T = torch.zeros((4,4), device='cpu')
+    T[0,0] = T[0,0] +  torch.cos(theta)
+    T[0,1] = T[0,1] + -torch.sin(theta)*torch.cos(alpha)
+    T[0,2] = T[0,2] +  torch.sin(theta)*torch.sin(alpha)
+    T[0,3] = T[0,3] +  a*torch.cos(theta)
+    T[1,0] = T[1,0] +  torch.sin(theta)
+    T[1,1] = T[1,1] +   torch.cos(theta)*torch.cos(alpha)
+    T[1,2] = T[1,2] +   -torch.cos(theta)*torch.sin(alpha)
+    T[1,3] = T[1,3] +  a*torch.sin(theta)
+    #T[2,0] =  0.0
+    T[2,1] = T[2,1] +  torch.sin(alpha)
+    T[2,2] = T[2,2] +   torch.cos(alpha)
+    T[2,3] = T[2,3] +  d
+    #T[3,0] = T[3,0] +  0.0
+    #T[3,1] = T[3,1] +  0.0
+    #T[3,2] = T[3,2] +  0.0
+    T[3,3] = T[3,3] +  1.0
+    ###- .0002 cpu, .005 gpu
+    return T 
+
 
 def run(train_cnt):
     log_ones = torch.zeros(batch_size, code_length).to(device)
@@ -32,6 +64,8 @@ def run(train_cnt):
         for phase in ['valid', 'train']:
             indexes = np.arange(0, data_buffer[phase]['states'].shape[0])
             random_state.shuffle(indexes)
+            rec_accum = 0
+            kl_accum = 0
             for st in np.arange(0, indexes.shape[0], batch_size):
                 en = min([st+batch_size, indexes.shape[0]])
                 batch_indexes = indexes[st:en]
@@ -46,22 +80,41 @@ def run(train_cnt):
                     assert batch_indexes.max() < prior_model.codes.shape[0]
                     prior_model.update_codebook(batch_indexes, u_q_flat.detach())
                 u_p, s_p = prior_model(u_q_flat)
-                #rec_state, z_e_x, z_q_x, latents = model.decode(u_q)
-                rec_state = model.acn_decode(u_q)
+                extremes = torch.FloatTensor(data_buffer[phase]['extremes'][batch_indexes,6]).to(device)
+                # predict angle 6
+                rec_states = np.pi*(torch.tanh(model.acn_decode(u_q))+1.0)
+
+
                 if args.use_DH:
-                    extremes = torch.FloatTensor(data_buffer[phase]['extremes'][batch_indexes]).to(device)
-                    rec_extremes = torch.stack([torch_dh.find_joint_coordinate_extremes(rec_state[x]) for x in range(states.shape[0])]).to(device)
-                    rec_loss = mse_loss(extremes[:,-1], rec_extremes[:,-1])*args.rec_weight
-                    rec_extremes.retain_grad()
+                    # do dh on cpu
+                    
+                    Tbase = torch.FloatTensor(data_buffer[phase]['Ts'][batch_indexes,0]).to('cpu')
+                    ext_pred = torch.zeros((batch_indexes.shape[0], 3)).to('cpu')
+                    for x in range(rec_states.shape[0]):
+                        T0_pred = torch.matmul(Tbase[x], torch_dh_transform(0, rec_states[x,0]))
+                        T1_pred = torch.matmul(T0_pred, torch_dh_transform(1, rec_states[x,1]))
+                        T2_pred = torch.matmul(T1_pred, torch_dh_transform(2, rec_states[x,2]))
+                        T3_pred = torch.matmul(T2_pred, torch_dh_transform(3, rec_states[x,3]))
+                        T4_pred = torch.matmul(T3_pred, torch_dh_transform(4, rec_states[x,4]))
+                        T5_pred = torch.matmul(T4_pred, torch_dh_transform(5, rec_states[x,6]))
+                        T6_pred = torch.matmul(T5_pred, torch_dh_transform(6, states[x,6]))
+
+                        ext_pred[x] = ext_pred[x] + T6_pred[:3,3]
+
+                    # TODO fix X
+                    rec_loss = mse_loss(extremes, ext_pred.to(device))
                 else:
-                    rec_loss = mse_loss(states, rec_state)*(rec_state.shape[-1]*args.rec_weight)
-                rec_state.retain_grad()
+                    rec_loss = mse_loss(states, rec_states)
+                rec_loss = rec_loss*(rec_states.shape[1]*args.rec_weight)
+                rec_states.retain_grad()
                 kl = kl_loss_function(u_q, 
                                       log_ones,
                                       u_p, 
                                       s_p,
                                       reduction='mean')
  
+                rec_accum += rec_loss.detach().cpu().item()
+                kl_accum += kl.detach().cpu().item()
                 #vq_loss = mse_loss(z_q_x, z_e_x.detach())
                 #commit_loss = mse_loss(z_e_x, z_q_x.detach())*vq_commitment_beta
                 if phase == 'train':
@@ -69,27 +122,25 @@ def run(train_cnt):
                     clip_grad_value_(prior_model.parameters(), 10)
                     kl.backward(retain_graph=True)
                     rec_loss.backward() 
-                    #vq_loss.backward(retain_graph=True)
-                    #commit_loss.backward(retain_graph=True)
                     opt.step()
-                    train_cnt += batch_size 
-            losses[phase]['kl'].append(kl.detach().cpu().item())
-            losses[phase]['rec'].append(rec_loss.detach().cpu().item())
-            #losses[phase]['vq'].append(vq_loss.detach().cpu().item())
-            #losses[phase]['commit'].append(commit_loss.detach().cpu().item())
-            losses[phase]['steps'].append(train_cnt)
+                    train_cnt += states.shape[0] 
 
-            if phase == 'train' and not dataset_view%10:
-                model_dict = {'model':model.state_dict(), 
-                              'prior_model':prior_model.state_dict(), 
-                              'train_cnt':train_cnt, 
-                              'losses':losses
-                            }
-                mpath = os.path.join(savebase, 'model_%012d.pt'%train_cnt)
-                lpath = os.path.join(savebase, 'model_%012d.losses'%train_cnt)
-                torch.save(model_dict, mpath)
-                torch.save(losses, lpath)
-                print('saving {}'.format(mpath))
+                if st == 0:
+                    losses[phase]['kl'].append(rec_accum/indexes.shape[0])
+                    losses[phase]['rec'].append(kl_accum/indexes.shape[0])
+                    losses[phase]['steps'].append(train_cnt)
+
+                    if phase == 'train' and not dataset_view%args.save_every_epoch:
+                        model_dict = {'model':model.state_dict(), 
+                                      'prior_model':prior_model.state_dict(), 
+                                      'train_cnt':train_cnt, 
+                                      'losses':losses
+                                    }
+                        mpath = os.path.join(savebase, 'model_%012d.pt'%train_cnt)
+                        lpath = os.path.join(savebase, 'model_%012d.losses'%train_cnt)
+                        torch.save(model_dict, mpath)
+                        torch.save(losses, lpath)
+                        print('saving {}'.format(mpath))
 
 def create_latent_file(phase, out_path):
     model.eval()
@@ -101,28 +152,49 @@ def create_latent_file(phase, out_path):
         all_acn_uq = []; all_acn_sp = []
         all_neighbors = []; all_neighbor_indexes = []
         all_neighbor_distances = []; all_vq_latents = []
-        all_rec_extremes = []; all_extremes = []
-        frames = []; next_frames = []
+        all_rec_extremes = []; all_extremes = []; all_neighbor_extremes = []
+        frames = []; next_frames = []; all_diffs = []
+
+        train_states = deepcopy(data_buffer['train']['states'])
+        train_extremes = deepcopy(data_buffer['train']['extremes'])[:,6]
         for i in range(0,sz,batch_size):
             batch_indexes = np.arange(i, min([i+batch_size, sz]))
             states = torch.FloatTensor(data_buffer[phase]['states'][batch_indexes]).to(args.device)
             u_q = model(states)
             u_q_flat = u_q.contiguous()
             u_p, s_p = prior_model(u_q_flat)
-            #rec_st, z_e_x, z_q_x, latents = model.decode(u_q)
-            rec_states = model.acn_decode(u_q)
-            rec_extremes = torch.stack([torch_dh.find_joint_coordinate_extremes(rec_states[x], torch_dh.base_tTall) for x in range(states.shape[0])]).to(device)
-            neighbor_distances, neighbor_indexes = prior_model.kneighbors(u_q_flat, n_neighbors=num_k)
-            all_st.extend(deepcopy(states.detach().cpu().numpy()))
-            all_extremes.extend(deepcopy(data_buffer[phase]['extremes']))
-            all_rec_extremes.extend(deepcopy(rec_extremes.detach().cpu().numpy()))
-            all_rec_st.extend(deepcopy(rec_states.detach().cpu().numpy()))
+            rec_states = np.pi*(torch.tanh(model.acn_decode(u_q))+1.0)
+            states = deepcopy(states.detach().cpu().numpy())
+            np_rec_states = deepcopy(rec_states.detach().cpu().numpy())
+            if args.use_DH:
+                Tbase = torch.FloatTensor(data_buffer[phase]['Ts'][batch_indexes,0]).to('cpu')
+                ext_pred = torch.zeros((batch_indexes.shape[0], 3)).to('cpu')
+                for x in range(rec_states.shape[0]):
+                    T0_pred = torch.matmul(Tbase[x], torch_dh_transform(0, rec_states[x,0]))
+                    T1_pred = torch.matmul(T0_pred, torch_dh_transform(1, rec_states[x,1]))
+                    T2_pred = torch.matmul(T1_pred, torch_dh_transform(2, rec_states[x,2]))
+                    T3_pred = torch.matmul(T2_pred, torch_dh_transform(3, rec_states[x,3]))
+                    T4_pred = torch.matmul(T3_pred, torch_dh_transform(4, rec_states[x,4]))
+                    T5_pred = torch.matmul(T4_pred, torch_dh_transform(5, rec_states[x,6]))
+                    T6_pred = torch.matmul(T5_pred, torch_dh_transform(6, states[x,6]))
+                    ext_pred[x] = ext_pred[x] + T6_pred[:3,3]
 
+            #np_rec_extremes = np.array([find_joint_coordinate_extremes(DH_attributes_jaco27DOF, np_rec_states[x]) for x in range(states.shape[0])])[:,6]
+            np_rec_extremes = ext_pred.detach().cpu().numpy()
+ 
+            neighbor_distances, neighbor_indexes = prior_model.kneighbors(u_q_flat, n_neighbors=num_k)
+
+            extremes = data_buffer[phase]['extremes'][batch_indexes][:,6]
+            diff = np.sqrt(((extremes-np_rec_extremes)**2).sum(axis=1))
+            all_diffs.extend(diff)
+            ni = deepcopy(neighbor_indexes.detach().cpu().numpy())
+            all_st.extend(states)
+            all_rec_st.extend(np_rec_states)
+            all_extremes.extend(extremes)
+            all_rec_extremes.extend(np_rec_extremes)
             all_acn_uq.extend(deepcopy(u_q.detach().cpu().numpy()))
             all_acn_sp.extend(deepcopy(s_p.detach().cpu().numpy()))
-            ni = deepcopy(neighbor_indexes.detach().cpu().numpy())
             all_neighbor_indexes.extend(ni)
-            all_neighbors.extend(deepcopy(data_buffer['train']['states'][ni]))
             all_neighbor_distances.extend(deepcopy(neighbor_distances.detach().cpu().numpy()))
             #all_vq_latents.extend(latents.detach().cpu().numpy())
         print("creating %s latent file: %s with %s examples"%(phase, out_path+'.npz', len(all_st)))
@@ -135,103 +207,13 @@ def create_latent_file(phase, out_path):
                  acn_uq=all_acn_uq,
                  acn_sp=all_acn_sp,
                  neighbor_train_indexes=all_neighbor_indexes,
-                 neighbors=all_neighbors,
                  neighbor_distances=all_neighbor_distances,
-                 #vq_latents=all_vq_latents, 
+                 train_st=train_states, 
+                 train_ex=train_extremes,
+                 num_k=num_k,
+                 diffs=all_diffs
                 ) 
 
-
-def plot_losses():
-    plt_base = load_path.replace('.pt', '')
-    plt.figure()
-    for lparam in losses['train'].keys():
-        if lparam != 'steps':
-            plt.plot(losses['train']['steps'][1:], losses['train'][lparam][1:], label='tr %s'%lparam, marker='x')
-            plt.plot(losses['valid']['steps'][1:], losses['valid'][lparam][1:], label='va %s'%lparam, marker='o')
-    plt.title('losses')
-    plt.legend()
-    plt.savefig(plt_base+'_losses.png')
-    plt.close()
-
-def plot_latents(latent_train, latent_valid):
-    train_data = np.load(latent_train)
-    valid_data = np.load(latent_valid)
-    blues = plt.cm.Blues(np.linspace(0.2,.8,num_k))[::-1]
-   
-    ymin = train_data['st'].min()
-    ymax = train_data['st'].max()
-    for phase, data in [('valid',valid_data), ('train',train_data)]:
- 
-        images = []
-        if args.plot_random:
-            inds = random_state.randint(0, data['st'].shape[0], args.num_plot_examples).astype(np.int)
-        
-            pltdir = load_path.replace('.pt', '_plots_random_%s'%phase)
-        else:
-            inds = np.arange(0, min([args.num_plot_examples,data['st'].shape[0]])).astype(np.int)
-            pltdir = load_path.replace('.pt', '_plots_time_%s'%phase)
-        print('plotting to', pltdir)
-
-        if not os.path.exists(pltdir):
-            os.makedirs(pltdir)
-        sscale = 50
-        diffs = []
-        for i in inds:
-            f,ax = plt.subplots(1,2,figsize=(8,5))
-            ex = data['ex'][i][-1]
-            rec_ex = data['rec_ex'][i][-1]
-            diff = np.square(ex-rec_ex)
-            diffs.append(diff)
- 
-            ax[0].plot(data['st'][i], label='data', lw=2, marker='x', color='mediumorchid')
-            ax[0].plot(data['rec_st'][i], label='rec', lw=1.5, marker='o', color='blue')
-
-            ax[1].scatter(ex[0], ex[1], s=ex[2]*sscale, marker='o', color='mediumorchid')
-            ax[1].scatter(rec_ex[0], rec_ex[1], s=rec_ex[2]*sscale, marker='o', color='blue')
-             
-            for nn, n in enumerate(data['neighbor_train_indexes'][i]):
-                if nn in [0, num_k-1]: 
-                    ax[0].plot(data['neighbors'][i][nn], label='k:%d i:%d'%(nn,n), lw=1., marker='.', color=blues[nn], alpha=.5)
-                else:
-                    ax[0].plot(data['neighbors'][i][nn], lw=1., marker='.', color=blues[nn], alpha=.5)
-                n_ext = find_joint_coordinate_extremes(DH_attributes_jaco27DOF, data['neighbors'][i][nn])
-                ax[1].scatter(n_ext[-1][0], n_ext[-1][1], s=n_ext[-1][2]*sscale, marker='o', color=blues[nn], alpha=0.5)
-            ax[0].set_ylim(ymin, ymax)                    
-            ax[1].set_ylim(-.2, 1.3)                    
-            ax[1].set_xlim(-.25, .25)                    
-            f.suptitle('TP:[{:.2f},{:.2f},{:.2f}]\nETP:[{:.2f},{:.2f},{:.2f}]\ndiff:[{:.2f},{:.2f},{:.2f}]'.format(ex[0],ex[1],ex[2],rec_ex[0],rec_ex[1],rec_ex[2],diff[0],diff[1],diff[2],))
-            #plt.legend()
-            pltname = os.path.join(pltdir, '%s_%05d.png'%(phase,i))
-            ax[0].legend()
-            print('plotting %s'%pltname)
-            plt.savefig(pltname)
-            plt.close()
-     
-            images.append(plt.imread(pltname))
-        plt.figure()
-        plt.plot(diffs)
-        plt.savefig(load_path.replace('.pt', 'TPdiff.png'))
-        images = np.array(images)
-        pltsearch = os.path.join(pltdir, phase+'_*png')
-        cmd = 'convert %s %s/_out.gif'%(pltsearch, pltdir)
-        os.system(cmd)
-        X = data['acn_uq'][inds]
-        X = X.reshape(X.shape[0], -1)
-        #km = KMeans(n_clusters=max([1,inds.shape[0]//3]))
-        #y = km.fit_predict(latents['st'][inds,0,0])
-        # color points based on clustering, label, or index
-        color = inds
-        perplexity = 10
-        param_name = '_tsne_%s_P%s.html'%(phase, perplexity)
-        html_path = load_path.replace('.pt', param_name)
-        tsne_plot(X=X, images=images, color=color,
-                      perplexity=perplexity,
-                      html_out_path=html_path, serve=False, img_size=cluster_img_size)
-        param_name = '_pca_%s.html'%(phase)
-        html_path = load_path.replace('.pt', param_name)
-        pca_plot(X=X, images=images, color=color,
-                     html_out_path=html_path, serve=False, img_size=cluster_img_size) 
-        
 
 if __name__ == '__main__':
     import argparse
@@ -246,7 +228,8 @@ if __name__ == '__main__':
     parser.add_argument('--eval', default=False, action='store_true')
     parser.add_argument('--plot_random', default=False, action='store_true')
     parser.add_argument('--num_plot_examples', default=256)
-    parser.add_argument('--rec_weight', type=float, default=4000)
+    parser.add_argument('--save_every_epoch', default=1)
+    parser.add_argument('--rec_weight', type=float, default=10)
     cluster_img_size = (120,120) 
     random_state = np.random.RandomState(0)
     today = date.today()
@@ -259,7 +242,7 @@ if __name__ == '__main__':
 
     if args.load_model == '':
         cnt = 0
-        exp_desc = 'lin' 
+        exp_desc = 'acn_dhv110wt_norm' 
         if args.use_DH:
             exp_desc = exp_desc+"DH"
       
@@ -277,8 +260,9 @@ if __name__ == '__main__':
     print('savebase: {}'.format(savebase))
 
 
-    valid_fname = 'datasets/test_TD3_jaco_00000_0001140000_eval_CAM-1_S_S1140000_E0010_position.npz'
-    train_fname = 'datasets/test_TD3_jaco_00000_0001160000_eval_CAM-1_S_S1160000_E0100_position.npz'
+
+    valid_fname = 'datasets/test_TD3_jaco_00000_0001140000_eval_CAM-1_S_S1140000_E0010_position_norm.npz'
+    train_fname = 'datasets/sep8randomClose_TD3_jaco_00000_0000600000_position_norm.npz'
     data_buffer = {}
     data_buffer['train'] = np.load(train_fname)
     data_buffer['valid'] = np.load(valid_fname)
@@ -320,23 +304,24 @@ if __name__ == '__main__':
             load_path = found_models[-1]
         print('loading {}'.format(load_path))
 
-        latent_base = load_path.replace('.pt', '_latent_')
+        results_base = load_path.replace('.pt', '_latent_')
         model_dict = torch.load(load_path)
         losses = torch.load(load_path.replace('.pt', '.losses'))
         model.load_state_dict(model_dict['model'])
         prior_model.load_state_dict(model_dict['prior_model'])
         train_cnt = model_dict['train_cnt']
     if args.plot:
-        plot_losses()
+        plot_rec_losses(load_path, losses)
         for phase in ['valid', 'train']:
-            create_latent_file(phase, latent_base+phase)
+            create_latent_file(phase, results_base+phase)
         print('plot latents')
-        plot_latents(latent_base+'train.npz', latent_base+'valid.npz')
+        plot_rec_results(results_base+'train.npz', 'train', random_indexes=args.plot_random, num_plot_examples=args.num_plot_examples, plot_neighbors=num_k)
+        plot_rec_results(results_base+'valid.npz', 'valid', random_indexes=args.plot_random, num_plot_examples=args.num_plot_examples, plot_neighbors=num_k)
     else:
         mse_loss = nn.MSELoss(reduction='mean')
         parameters = []
         parameters+=list(model.parameters())
         parameters+=list(prior_model.parameters())
-        opt = optim.Adam(parameters, lr=1e-6)
+        opt = optim.Adam(parameters, lr=1e-5)
         run(train_cnt)
 
