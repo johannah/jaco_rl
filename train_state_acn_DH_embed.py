@@ -14,7 +14,7 @@ import torch
 from torch import nn, optim
 from torchvision import transforms
 from torch.nn.utils.clip_grad import clip_grad_value_
-from acn_models import tPTPriorNetwork, weights_init, VQEmbedding, ResBlock, ACNstateAngleBig
+from acn_models import tPTPriorNetwork, weights_init, VQEmbedding, ResBlock, ACNstateAngleEmbedding
 from acn_utils import kl_loss_function
 from acn_utils import tsne_plot
 from acn_utils import pca_plot
@@ -55,15 +55,18 @@ def batch_torch_dh_transform(dh_index,angles):
     return T 
 
 
-def forward_pass(states, extremes, Ts, phase, batch_indexes):
-    u_q = model(states)
+def forward_pass(state_bins, extremes, Ts, phase, batch_indexes):
+    assert state_bins[:,6].min() > 29999
+    assert state_bins[:,1].max() < 10001
+    #nans out of the model
+    u_q = model(state_bins)
     u_q_flat = u_q.contiguous()
     rec_angle = np.pi*(torch.tanh(model.acn_decode(u_q))+1)
     if phase == 'train':
         assert batch_indexes.max() < prior_model.codes.shape[0]
         prior_model.update_codebook(batch_indexes, u_q_flat.detach())
     u_p, s_p = prior_model(u_q_flat)
-    Tall = torch.zeros((states.shape[0],4,4)).to(args.device)
+    Tall = torch.zeros((state_bins.shape[0],4,4)).to(args.device)
     Tall = Tall + torch.FloatTensor(([[1,0,0,0],[0,-1,0,0],[0,0,-1,0],[0,0,0,1]])).to(args.device)
 
     _T0 = batch_torch_dh_transform(0, rec_angle[:,0])
@@ -88,16 +91,20 @@ def forward_pass(states, extremes, Ts, phase, batch_indexes):
     T6_pred = torch.matmul(T5_pred,_T6)
 
     ext_pred = T6_pred[:,:3,3]
+    if torch.isnan(u_q).sum():
+        print("NAANS")
+        embed()
+   
     return ext_pred, rec_angle, u_q, u_p, s_p
 
 def run(train_cnt):
-    log_ones = torch.zeros(batch_size, code_length).to(device)
+    log_ones = torch.zeros(batch_size, args.code_length).to(device)
     st_tm = time.time()
     for dataset_view in range(10000):
         print('starting epoch {}'.format(dataset_view))
         print('last epoch took {:.2f} mins'.format((time.time()-st_tm)/60.0))
         st_tm = time.time()
-        for phase in ['train', 'valid']:
+        for phase in ['valid', 'train']:
             indexes = np.arange(0, data_buffer[phase]['states'].shape[0])
             random_state.shuffle(indexes)
             rec_accum = 0
@@ -106,30 +113,29 @@ def run(train_cnt):
                 en = min([st+batch_size, indexes.shape[0]])
                 batch_indexes = indexes[st:en]
                 if log_ones.shape[0] != batch_indexes.shape[0]:
-                    log_ones = torch.zeros(batch_indexes.shape[0], code_length).to(device)
+                    log_ones = torch.zeros(batch_indexes.shape[0], args.code_length).to(device)
                 states = torch.FloatTensor(data_buffer[phase]['states'][batch_indexes]).to(device)
+                state_bins = torch.LongTensor(data_buffer[phase]['state_bins'][batch_indexes]).to(device)
                 extremes = torch.FloatTensor(data_buffer[phase]['extremes'][batch_indexes,6]).to(device)
                 Ts = torch.FloatTensor(data_buffer[phase]['Ts'][batch_indexes]).to(device)
-                ext_pred, rec_angle, u_q, u_p, s_p = forward_pass(states, extremes, Ts, phase, batch_indexes)
-                ext_pred.retain_grad()
-                rec_angle.retain_grad()
+                ext_pred, rec_angle, u_q, u_p, s_p = forward_pass(state_bins, extremes, Ts, phase, batch_indexes)
                 rec_loss = mse_loss(extremes, ext_pred.to(device))
                 rec_loss = rec_loss*args.rec_weight
+                rec_angle.retain_grad()
                 kl = kl_loss_function(u_q, 
                                       log_ones,
                                       u_p, 
                                       s_p,
                                       reduction='mean')
  
-                if not st%(batch_size*10):
-                    print(rec_loss.item(),kl.item())
+                if not st %(batch_size*100):
+                    print(rec_loss.item(), kl.item())
                 #vq_loss = mse_loss(z_q_x, z_e_x.detach())
                 #commit_loss = mse_loss(z_e_x, z_q_x.detach())*vq_commitment_beta
                 if phase == 'train':
-                    clip_grad_value_(model.parameters(), 10)
-                    clip_grad_value_(prior_model.parameters(), 10)
+                    clip_grad_value_(model.parameters(), 5)
+                    clip_grad_value_(prior_model.parameters(), 5)
                     kl.backward(retain_graph=True)
-               
                     rec_loss.backward() 
                     opt.step()
                     train_cnt += states.shape[0] 
@@ -154,7 +160,8 @@ def run(train_cnt):
 def create_latent_file(phase, out_path):
     model.eval()
     prior_model.eval()
-    if not os.path.exists(out_path+'.npz'):
+    if 1:
+    #if not os.path.exists(out_path+'.npz'):
         sz = min([data_buffer[phase]['states'].shape[0], 10000])
         all_indexes = []; all_st = []
         all_rec_st = []
@@ -169,9 +176,10 @@ def create_latent_file(phase, out_path):
         for i in range(0,sz,batch_size):
             batch_indexes = np.arange(i, min([i+batch_size, sz]))
             states = torch.FloatTensor(data_buffer[phase]['states'][batch_indexes]).to(args.device)
+            state_bins = torch.LongTensor(data_buffer[phase]['state_bins'][batch_indexes]).to(device)
             extremes = torch.FloatTensor(data_buffer[phase]['extremes'][batch_indexes,6]).to(device)
             Ts = torch.FloatTensor(data_buffer[phase]['Ts'][batch_indexes]).to(device)
-            ext_pred, rec_angle, u_q, u_p, s_p = forward_pass(states, extremes, Ts, phase, batch_indexes)
+            ext_pred, rec_angle, u_q, u_p, s_p = forward_pass(state_bins, extremes, Ts, phase, batch_indexes)
             states = deepcopy(states.detach().cpu().numpy())
             np_rec_states = deepcopy(rec_angle.detach().cpu().numpy())
             np_rec_extremes = ext_pred.detach().cpu().numpy()
@@ -208,6 +216,7 @@ def create_latent_file(phase, out_path):
 
 
 if __name__ == '__main__':
+    # trained with 32, nan with 8 codelength
     import argparse
     from datetime import date
     parser = argparse.ArgumentParser()
@@ -218,9 +227,9 @@ if __name__ == '__main__':
     parser.add_argument('--exp_name', default='test')
     parser.add_argument('--eval', default=False, action='store_true')
     parser.add_argument('--plot_random', default=False, action='store_true')
-    parser.add_argument('--num_plot_examples', default=512)
+    parser.add_argument('--num_plot_examples', type=int, default=512)
     parser.add_argument('--save_every_epoch', type=int, default=5)
-    parser.add_argument('--code_length', type=int, default=64)
+    parser.add_argument('--code_length', type=int, default=8)
     parser.add_argument('--rec_weight', type=float, default=10000)
     cluster_img_size = (120,120) 
     random_state = np.random.RandomState(0)
@@ -232,10 +241,9 @@ if __name__ == '__main__':
         parser.print_help()
         sys.exit()
 
-    code_length = args.code_length
     if args.load_model == '':
         cnt = 0
-        exp_desc = 'BIG_acn_DH_%02dCL_%05d' %(args.code_length, args.rec_weight)
+        exp_desc = 'acn_embed_%02dCL_%05dwt'%(args.code_length, args.rec_weight)
       
         savebase = os.path.join(args.savedir, today_str+exp_desc+args.exp_name+'_%02d'%cnt)
         while len(glob(os.path.join(savebase, '*.pt'))):
@@ -252,8 +260,8 @@ if __name__ == '__main__':
 
 
 
-    valid_fname = 'datasets/test_TD3_jaco_00000_0001140000_eval_CAM-1_S_S1140000_E0010_position_norm.npz'
-    train_fname = 'datasets/sep8randomClose_TD3_jaco_00000_0000200000_norm_position_norm.npz'
+    valid_fname = 'datasets/test_TD3_jaco_00000_0001140000_eval_CAM-1_S_S1140000_E0010_norm_position_norm_Q005000.npz'
+    train_fname = 'datasets/sep8randomClose_TD3_jaco_00000_0000200000_norm_position_norm_Q005000.npz'
     #train_fname = 'datasets/test_TD3_jaco_00000_0001160000_eval_CAM-1_S_S1160000_E0100_norm_position_norm.npz'
     data_buffer = {}
     data_buffer['train'] = np.load(train_fname)
@@ -275,10 +283,12 @@ if __name__ == '__main__':
  
     train_size,state_size = data_buffer['train']['states'].shape
     valid_size = data_buffer['valid']['states'].shape[0]
-    model = ACNstateAngleBig(code_length=code_length, input_size=state_size).to(device)
+    n_bins = 5000
+    n_joints = 7
+    model = ACNstateAngleEmbedding(n_bins=n_bins*n_joints, code_length=args.code_length, input_size=state_size).to(device)
     print("setting up prior with training size {}".format(train_size))
     prior_model = tPTPriorNetwork(size_training_set=train_size, 
-                                  code_length=code_length,
+                                  code_length=args.code_length,
                                   k=num_k).to(device)
 
     train_cnt = 0

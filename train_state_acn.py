@@ -49,7 +49,9 @@ def run(train_cnt):
                                       s_p,
                                       reduction='mean')
                 
-                rec_loss = mse_loss(states, rec_state)*(rec_state.shape[-1]*rec_weight)
+                rec_loss = mse_loss(states, rec_state)*rec_weight
+                if st%(10*batch_size):
+                    print(rec_loss.item(), kl.item())
                 #vq_loss = mse_loss(z_q_x, z_e_x.detach())
                 #commit_loss = mse_loss(z_e_x, z_q_x.detach())*vq_commitment_beta
                 if phase == 'train':
@@ -68,17 +70,16 @@ def run(train_cnt):
                 #losses[phase]['commit'].append(commit_loss.detach().cpu().item())
                 losses[phase]['steps'].append(train_cnt)
 
-                if phase == 'train' and not dataset_view%100:
-                    model_dict = {'model':model.state_dict(), 
-                                  'prior_model':prior_model.state_dict(), 
-                                  'train_cnt':train_cnt, 
-                                  'losses':losses
-                                }
-                    mpath = os.path.join(savebase, 'model_%012d.pt'%train_cnt)
-                    lpath = os.path.join(savebase, 'model_%012d.losses'%train_cnt)
-                    torch.save(model_dict, mpath)
-                    torch.save(losses, lpath)
-                    print('saving {}'.format(mpath))
+        model_dict = {'model':model.state_dict(), 
+                      'prior_model':prior_model.state_dict(), 
+                      'train_cnt':train_cnt, 
+                      'losses':losses
+                    }
+        mpath = os.path.join(savebase, 'model_%012d.pt'%train_cnt)
+        lpath = os.path.join(savebase, 'model_%012d.losses'%train_cnt)
+        torch.save(model_dict, mpath)
+        torch.save(losses, lpath)
+        print('saving {}'.format(mpath))
     embed() 
 
 def create_latent_file(phase, out_path):
@@ -291,10 +292,11 @@ if __name__ == '__main__':
     parser.add_argument('--load_model', default='')
     parser.add_argument('--device', default='cpu')
     parser.add_argument('--savedir', default='models')
-    parser.add_argument('--exp_name', default='test')
+    parser.add_argument('--exp_name', default='origacn_mse_recwt100')
     parser.add_argument('--eval', default=False, action='store_true')
     parser.add_argument('--plot_random', default=False, action='store_true')
-    parser.add_argument('--num_plot_examples', default=256)
+    parser.add_argument('--num_plot_examples', default=256, type=int)
+    parser.add_argument('--save_every', default=5, type=int)
     cluster_img_size = (120,120) 
     rec_weight = 100
     random_state = np.random.RandomState(0)
@@ -318,6 +320,7 @@ if __name__ == '__main__':
         os.system('cp *.py %s/python'%savebase)
     else:
         savebase = os.path.split(args.load_model)[0]
+    print('saving', savebase)
 
 
     valid_fname = 'datasets/test_TD3_jaco_00000_0001140000_eval_CAM-1_S_S1140000_E0010_position.npz'
@@ -326,7 +329,8 @@ if __name__ == '__main__':
     data_buffer['train'] = np.load(train_fname)
     data_buffer['valid'] = np.load(valid_fname)
     batch_size = 128
-    code_length = 32
+    #code_length = 32
+    code_length = 4
     #vq_commitment_beta = 0.25
     num_k = 5
     device = args.device

@@ -44,9 +44,6 @@ def plot_rec_results(results_fpath, phase, random_indexes=False, seed=10, num_pl
     else:
         inds = np.arange(0, min([num_plot_examples,data['st'].shape[0]])).astype(np.int)
         pltdir = results_fpath.replace('.npz', '_plots_time_%s'%phase)
-
-
-
     print('plotting to', pltdir)
 
     if not os.path.exists(pltdir):
@@ -69,10 +66,9 @@ def plot_rec_results(results_fpath, phase, random_indexes=False, seed=10, num_pl
     sscale = 100
     for num,i in enumerate(inds):
         pltname = os.path.join(pltdir, '%s_%04d.png'%(phase,num))
-        #if os.path.exists(pltname):
-        #    print('skipping %s'%pltname)
-        #else:
-        if 1:
+        if os.path.exists(pltname):
+            print('skipping %s'%pltname)
+        else:
             f,ax = plt.subplots(1,2,figsize=(8,5))
             ex = data['ex'][i]
             rec_ex = data['rec_ex'][i]
@@ -80,8 +76,8 @@ def plot_rec_results(results_fpath, phase, random_indexes=False, seed=10, num_pl
             ax[0].plot(data['st'][i], label='data', lw=2, marker='x', color='mediumorchid')
             ax[0].plot(data['rec_st'][i], label='rec', lw=1.5, marker='o', color='blue')
 
-            ax[1].scatter(ex[0], ex[1], s=min([ex[2],.1])*sscale, marker='o', color='mediumorchid')
-            ax[1].scatter(rec_ex[0], rec_ex[1], s=min([.1,rec_ex[2]])*sscale, marker='o', color='blue')
+            ax[1].scatter(ex[0], ex[1], s=min([abs(ex[2]),.01])*sscale, marker='o', color='mediumorchid')
+            ax[1].scatter(rec_ex[0], rec_ex[1], s=min([.01,abs(rec_ex[2])])*sscale, marker='o', color='blue')
             ax[0].set_ylim(ymin, ymax)                    
             ax[1].set_ylim(eymin, eymax)                    
             ax[1].set_xlim(exmin, exmax)                    
@@ -91,7 +87,7 @@ def plot_rec_results(results_fpath, phase, random_indexes=False, seed=10, num_pl
                         ax[0].plot(data['train_st'][n], label='k:%d i:%d'%(nn,n), lw=1., marker='.', color=blues[nn], alpha=.5)
                     else:
                         ax[0].plot(data['train_st'][n], lw=1., marker='.', color=blues[nn], alpha=.5)
-                    ax[1].scatter(data['train_ex'][n][0], data['train_ex'][n][1], s=sscale*min([data['train_ex'][n][2],.1]), color=blues[nn])
+                    ax[1].scatter(data['train_ex'][n][0], data['train_ex'][n][1], s=sscale*min([abs(data['train_ex'][n][2]),.01]), color=blues[nn])
  
 
             #f.suptitle('TP:[{:.2f},{:.2f},{:.2f}]\nETP:[{:.2f},{:.2f},{:.2f}]\ndiff:[{:.2f},{:.2f},{:.2f}],dis {:.2f}'.format(ex[0],ex[1],ex[2],rec_ex[0],rec_ex[1],rec_ex[2],d[0],d[1],d[2],diff[i]))

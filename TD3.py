@@ -185,8 +185,12 @@ class TD3(object):
         self.actor.load_state_dict(model_dict['actor'])
         self.critic_optimizer.load_state_dict(model_dict['critic_optimizer'])
         self.actor_optimizer.load_state_dict(model_dict['actor_optimizer'])
-        self.loss_dict = model_dict['loss_dict']
         self.total_it = model_dict['total_it']
+        try:
+            self.loss_dict = model_dict['loss_dict']
+        except:
+            self.loss_dict = {'actor':[0], 'critic':[0], 'critic_step':[0], 'actor_step':[0]}
+
         # TODO this is wrong
         if len(self.loss_dict['critic_step']):
             self.step = self.loss_dict['critic_step'][-1]

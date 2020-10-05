@@ -15,7 +15,7 @@ from torch.autograd import Variable
 from torch import nn, optim
 from torchvision import transforms
 from torch.nn.utils.clip_grad import clip_grad_value_
-from models import AngleAutoEncoder
+from models import BigAngleAutoEncoder
 import time
 from plotting import plot_rec_losses, plot_rec_results
 from jaco import torchDHtransformer, DH_attributes_jaco27DOF, get_torch_attributes, find_joint_coordinate_extremes
@@ -25,7 +25,7 @@ def torch_dh_transform(dh_index,angle):
     d = tdh['DH_d'][dh_index]
     a = tdh['DH_a'][dh_index]
     alpha = tdh['DH_alpha'][dh_index]
-    T = torch.zeros((4,4), device='cpu')
+    T = torch.zeros((4,4), device=args.device)
     T[0,0] = T[0,0] +  torch.cos(theta)
     T[0,1] = T[0,1] + -torch.sin(theta)*torch.cos(alpha)
     T[0,2] = T[0,2] +  torch.sin(theta)*torch.sin(alpha)
@@ -45,6 +45,69 @@ def torch_dh_transform(dh_index,angle):
     ###- .0002 cpu, .005 gpu
     return T 
 
+def batch_torch_dh_transform(dh_index,angles):
+    theta = tdh['DH_theta_sign'][dh_index]*angles+tdh['DH_theta_offset'][dh_index]
+    d = tdh['DH_d'][dh_index]
+    a = tdh['DH_a'][dh_index]
+    alpha = tdh['DH_alpha'][dh_index]
+    bs = angles.shape[0]
+    T = torch.zeros((bs,4,4), device=args.device)
+    T[:,0,0] = T[:,0,0] +  torch.cos(theta)
+    T[:,0,1] = T[:,0,1] + -torch.sin(theta)*torch.cos(alpha)
+    T[:,0,2] = T[:,0,2] +  torch.sin(theta)*torch.sin(alpha)
+    T[:,0,3] = T[:,0,3] +  a*torch.cos(theta)
+    T[:,1,0] = T[:,1,0] +  torch.sin(theta)
+    T[:,1,1] = T[:,1,1] +   torch.cos(theta)*torch.cos(alpha)
+    T[:,1,2] = T[:,1,2] +   -torch.cos(theta)*torch.sin(alpha)
+    T[:,1,3] = T[:,1,3] +  a*torch.sin(theta)
+    #T:,[2,0] =  :,0.0
+    T[:,2,1] = T[:,2,1] +  torch.sin(alpha)
+    T[:,2,2] = T[:,2,2] +   torch.cos(alpha)
+    T[:,2,3] = T[:,2,3] +  d
+    #T[3,0] = T[3,0] +  0.0
+    #T[3,1] = T[3,1] +  0.0
+    #T[3,2] = T[3,2] +  0.0
+    T[:,3,3] = T[:,3,3] +  1.0
+    ###- .0002 cpu, .005 gpu
+    return T 
+
+def loopit(rec_angle, states, T2):
+    ext_pred = torch.zeros((rec_angle.shape[0], 3)).to(args.device)
+    for x in range(rec_angle.shape[0]):
+        _T3 = torch_dh_transform(3, rec_angle[x,0])
+        T3_pred = torch.matmul(T2[x],_T3)
+
+        _T4 = torch_dh_transform(4, rec_angle[x,1])
+        T4_pred = torch.matmul(T3_pred,_T4)
+
+        _T5 = torch_dh_transform(5, rec_angle[x,2])
+        T5_pred = torch.matmul(T4_pred,_T5)
+
+        _T6 = torch_dh_transform(6, states[x,6])
+        T6_pred = torch.matmul(T5_pred,_T6)
+
+        ext_pred[x] = ext_pred[x] + T6_pred[:3,3]
+    return ext_pred
+ 
+def forward_pass(states, extremes, Ts):
+    rec_angle = np.pi*(torch.tanh(model(states[:,:3], extremes))+1)
+    T2 = Ts[:,2]
+
+    _T3 = batch_torch_dh_transform(3, rec_angle[:,0])
+    T3_pred = torch.matmul(T2,_T3)
+
+    _T4 = batch_torch_dh_transform(4, rec_angle[:,1])
+    T4_pred = torch.matmul(T3_pred,_T4)
+
+    _T5 = batch_torch_dh_transform(5, rec_angle[:,2])
+    T5_pred = torch.matmul(T4_pred,_T5)
+
+    _T6 = batch_torch_dh_transform(6, states[:,6])
+    T6_pred = torch.matmul(T5_pred,_T6)
+    ext_pred = T6_pred[:,:3,3]
+    return ext_pred, rec_angle
+
+
 def run(train_cnt):
     st_tm = time.time()
     for dataset_view in range(train_cnt//batch_size, 10000000):
@@ -60,27 +123,8 @@ def run(train_cnt):
                 batch_indexes = indexes[st:en]
                 states = torch.FloatTensor(data_buffer[phase]['states'][batch_indexes]).to(device)
                 extremes = torch.FloatTensor(data_buffer[phase]['extremes'][batch_indexes,6]).to(device)
-                # predict angle 6
-                rec_angle = np.pi*(torch.tanh(model(states[:,:3], extremes))+1)
-
-                T2 = torch.FloatTensor(data_buffer[phase]['Ts'][batch_indexes,2]).to('cpu')
-                ext_pred = torch.zeros((batch_indexes.shape[0], 3)).to('cpu')
-        
-                for x in range(batch_indexes.shape[0]):
-                    _T3 = torch_dh_transform(3, rec_angle[x,0])
-                    T3_pred = torch.matmul(T2[x],_T3)
-
-                    _T4 = torch_dh_transform(4, rec_angle[x,1])
-                    T4_pred = torch.matmul(T3_pred,_T4)
-
-                    _T5 = torch_dh_transform(5, rec_angle[x,2])
-                    T5_pred = torch.matmul(T4_pred,_T5)
-
-                    _T6 = torch_dh_transform(6, states[x,6])
-                    T6_pred = torch.matmul(T5_pred,_T6)
-
-                    ext_pred[x] = ext_pred[x] + T6_pred[:3,3]
- 
+                Ts = torch.FloatTensor(data_buffer[phase]['Ts'][batch_indexes]).to(device)
+                ext_pred, rec_angle = forward_pass(states, extremes, Ts)
                 rec_loss = mse_loss(extremes, ext_pred.to(device))
                 if phase == 'train':
                     clip_grad_value_(model.parameters(), 5)
@@ -106,7 +150,7 @@ def run(train_cnt):
 def create_results_file(phase, out_path):
     model.eval()
     if not os.path.exists(out_path+'.npz'):
-        sz = data_buffer[phase]['states'].shape[0]
+        sz = min([data_buffer[phase]['states'].shape[0], 10000])
         all_indexes = []; all_st = []
         all_rec_st = []
         all_rec_extremes = []; all_extremes = []
@@ -115,31 +159,12 @@ def create_results_file(phase, out_path):
             batch_indexes = np.arange(i, min([i+batch_size, sz]))
             states = torch.FloatTensor(data_buffer[phase]['states'][batch_indexes]).to(device)
             extremes = torch.FloatTensor(data_buffer[phase]['extremes'][batch_indexes,6]).to(device)
-
-            rec_angle = np.pi*(torch.tanh(model(states[:,:3], extremes))+1)
-
-            T2 = torch.FloatTensor(data_buffer[phase]['Ts'][batch_indexes,2]).to('cpu')
-            ext_pred = torch.zeros((batch_indexes.shape[0], 3)).to('cpu')
-        
-            for x in range(batch_indexes.shape[0]):
-                _T3 = torch_dh_transform(3, rec_angle[x,0])
-                T3_pred = torch.matmul(T2[x],_T3)
-
-                _T4 = torch_dh_transform(4, rec_angle[x,1])
-                T4_pred = torch.matmul(T3_pred,_T4)
-
-                _T5 = torch_dh_transform(5, rec_angle[x,2])
-                T5_pred = torch.matmul(T4_pred,_T5)
-
-                _T6 = torch_dh_transform(6, states[x,6])
-                T6_pred = torch.matmul(T5_pred,_T6)
-
-                ext_pred[x] = ext_pred[x] + T6_pred[:3,3]
- 
+            Ts = torch.FloatTensor(data_buffer[phase]['Ts'][batch_indexes]).to(device)
+            ext_pred, rec_angle = forward_pass(states, extremes, Ts)
             extremes = data_buffer[phase]['extremes'][batch_indexes,6]
             states = states.detach().cpu().numpy()
             rec_st = deepcopy(states)
-            rec_st[:,4:6] = rec_angle.detach().cpu().numpy()
+            rec_st[:,3:6] = rec_angle.detach().cpu().numpy()
             rec_ex = ext_pred.detach().cpu().numpy()
 
             all_st.extend(states)
@@ -173,7 +198,7 @@ if __name__ == '__main__':
     parser.add_argument('--eval', default=False, action='store_true')
     parser.add_argument('--plot_random', default=False, action='store_true')
     parser.add_argument('--num_plot_examples', default=256)
-    parser.add_argument('--save_every_epochs', default=1)
+    parser.add_argument('--save_every_epochs', default=10)
     parser.add_argument('--rec_weight', type=float, default=4000)
     batch_size = 256
     random_state = np.random.RandomState(0)
@@ -187,7 +212,7 @@ if __name__ == '__main__':
 
     if args.load_model == '':
         cnt = 0
-        exp_desc = 'aepos45normlr1e4' 
+        exp_desc = 'aepos45normlr1e4_batchBig' 
         exp_desc = exp_desc+"DH"
       
         savebase = os.path.join(args.savedir, today_str+exp_desc+args.exp_name+'_%02d'%cnt)
@@ -212,8 +237,8 @@ if __name__ == '__main__':
 
     device = args.device
     dh = DH_attributes_jaco27DOF
-    torch_dh = torchDHtransformer(DH_attributes_jaco27DOF, 'cpu')
-    tdh = get_torch_attributes(DH_attributes_jaco27DOF, 'cpu')
+    torch_dh = torchDHtransformer(DH_attributes_jaco27DOF, args.device)
+    tdh = get_torch_attributes(DH_attributes_jaco27DOF, args.device)
     losses = {
               'train':{'rec':[],'steps':[]},
               'valid':{'rec':[],'steps':[]}
@@ -221,7 +246,7 @@ if __name__ == '__main__':
  
     train_size,state_size = data_buffer['train']['states'].shape
     valid_size = data_buffer['valid']['states'].shape[0]
-    model = AngleAutoEncoder(input_size=3, output_size=3).to(device)
+    model = BigAngleAutoEncoder(input_size=3, output_size=3).to(device)
     print("setting up with training size {}".format(train_size))
     train_cnt = 0
     if args.load_model != '':
