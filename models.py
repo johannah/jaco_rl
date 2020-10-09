@@ -96,7 +96,7 @@ class BigAngleEmbed(nn.Module):
         self.target_embeddings = nn.Embedding(n_bins, embedding_dim)
         self.angle_network = nn.Sequential(
                          OrderedDict([
-                            ('lin0',nn.Linear(input_size*embeding_dim, hs)), 
+                            ('lin0',nn.Linear(input_size*embedding_dim, hs)), 
                             ('relu',nn.ReLU(True)), 
                             ('lin1',nn.Linear(hs, hs)),
                             ('relu',nn.ReLU(True)), 
@@ -134,7 +134,7 @@ class BigAngleEmbed(nn.Module):
                            ))
  
     def forward(self, angle, target):
-        embeds = self.embeddings(angle).view((states.shape[0], -1))
+        embeds = self.embeddings(angle).view((angle.shape[0], -1))
         aout = self.angle_network(embeds) 
         tout = self.target_position_network(target) 
         # angle outptu 
