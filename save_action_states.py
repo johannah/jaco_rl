@@ -42,6 +42,7 @@ for fp in  [os.path.join(load_dir, tr_eval_dir, tr_sim_replay_file), os.path.joi
 
     sbuffer = pickle.load(open(fp, 'rb'))
     
+    embed()
     states = sbuffer.states[:sbuffer.size,3:3+7] 
     next_states = sbuffer.next_states[:sbuffer.size,3:3+7] 
     actions = sbuffer.actions[:sbuffer.size] 

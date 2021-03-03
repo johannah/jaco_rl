@@ -36,10 +36,20 @@ def get_next_frame(frame_env):
         next_frame = compress_frame(next_frame)
     return next_frame
 
+def format_observation(o):
+    obs = obs_placeholder*0.0
+    cnt = 0
+    for u in args.use_states:
+        val = o[u].flatten()[None]
+        s = val.shape[1]
+        obs[0,cnt:cnt+s] = val
+        cnt += s
+    return obs[:1,:cnt]
+ 
 def get_state_names_dict():
     plot_environment_kwargs = deepcopy(environment_kwargs)
     plot_environment_kwargs['flat_observation'] = False
-    _plot_env = manipulation.load('reach_site_features')
+    _plot_env = manipulation.load(args.env_name)
     plot_spec = _plot_env.observation_spec()
     del _plot_env; del plot_environment_kwargs
     state_names_dict = {}
@@ -61,7 +71,7 @@ def evaluate(load_model_filepath):
     state_names_dict = get_state_names_dict()
     train_replay_buffer = load_replay_buffer(load_model_base + '.pkl')
 
-    eval_env = manipulation.load('reach_site_features')
+    eval_env = manipulation.load(args.env_name)
 
     # generate random seed
     random_state = np.random.RandomState(eval_seed)
@@ -96,23 +106,17 @@ def evaluate(load_model_filepath):
             num_steps = 0
             print('reset')
             step_type, reward, discount, o = eval_env.reset()
-            state = np.hstack((o['target_position'], 
-                               o['j2s7/joints_pos'].reshape(1,14), 
-                               o['j2s7/joints_vel']))
+            state = format_observation(o)
             frame_compressed = get_next_frame(eval_env)
             print('starting episode', e)
             # TODO off by one error in step count!? of replay_buffer
             while done == False:
                 action = (
-                        policy.select_action(state)
-                    ).clip(-kwargs['max_action'], kwargs['max_action'])
+                        policy.select_action(state)*kwargs['max_actions']
+                    )
                 # Perform action
                 step_type, reward, discount, o = eval_env.step(action)
-                next_state = np.hstack((o['target_position'], 
-                                        o['j2s7/joints_pos'].reshape(1,14), 
-                                        o['j2s7/joints_vel']))
-
-                print('step', num_steps, reward, action)
+                next_state = format_observation(o)
                 next_frame_compressed = get_next_frame(eval_env)
                 done = step_type.last()
                 # Store data in replay buffer
@@ -131,15 +135,14 @@ def evaluate(load_model_filepath):
             epath = eval_base+ '_E{}_R{}'.format(e, er)
             exp = eval_replay_buffer.get_last_steps(num_steps)
             plotting.plot_states(exp, epath, detail_dict=state_names_dict)
-            if args.domain == 'jaco':
-                plotting.plot_position_actions(exp, epath, relative=True)
+            plotting.plot_position_actions(exp, epath, relative=True)
             if np.max([args.plot_movie, args.plot_action_movie, args.plot_frames]):
                 emovie_path = epath+'CAM{}.mp4'.format(e, er, args.camera_view)
                 print('plotting episode: {}'.format(emovie_path))
                 plotting.plot_frames(emovie_path, 
                                      eval_replay_buffer.get_last_steps(num_steps),
                                       plot_action_frames=args.plot_action_movie,
-                                       min_action=-kwargs['max_action'], max_action=kwargs['max_action'], 
+                                       min_action=kwargs['min_actions'], max_action=kwargs['max_action'], 
                                      plot_frames=args.plot_frames)
 
     eval_replay_buffer.shrink_to_last_step()
@@ -152,7 +155,7 @@ def evaluate(load_model_filepath):
 
     if np.max([args.plot_movie, args.plot_action_movie, args.plot_frames]):
         movie_path = eval_base+'_CAM{}.mp4'.format(args.camera_view)
-        plotting.plot_frames(movie_path, eval_replay_buffer.get_last_steps(eval_replay_buffer.size), plot_action_frames=args.plot_action_movie, min_action=-kwargs['max_action'], max_action=kwargs['max_action'], plot_frames=args.plot_frames)
+        plotting.plot_frames(movie_path, eval_replay_buffer.get_last_steps(eval_replay_buffer.size), plot_action_frames=args.plot_action_movie, min_action=kwargs['min_actions'], max_action=kwargs['max_actions'], plot_frames=args.plot_frames)
     return eval_replay_buffer, eval_step_filepath
 
 def load_replay_buffer(load_replay_path, load_model_path='', kwargs={}, seed=None):
@@ -182,7 +185,7 @@ def load_replay_buffer(load_replay_path, load_model_path='', kwargs={}, seed=Non
     return replay_buffer
 
 def get_step_filename(t):
-    return "{}_{}_{}_{:05d}_{:010d}".format(args.exp_name, args.policy, args.domain, args.seed, t)
+    return "{}_{}_{}_{:05d}_{:010d}".format(args.exp_name, args.policy, args.env_name, args.seed, t)
 
 def get_step_filepath(results_dir, t):
     return os.path.join(results_dir, get_step_filename(t))
@@ -191,34 +194,29 @@ def train():
     task_kwargs['random'] = args.seed
     random_state = np.random.RandomState(task_kwargs['random'])
     policy, start_t, results_dir, loaded_modelpath = load_policy(args.load_model)
-    env = manipulation.load('reach_site_features')
+    env = manipulation.load(args.env_name)
     #TODO - use action dim instead? 
-    action_shape = kwargs['action_dim']
     replay_buffer = load_replay_buffer(load_replay_path=args.load_replay, load_model_path=args.load_model, kwargs=kwargs, seed=args.seed)
     info = utils.create_new_info_dict(args, loaded_modelpath, args.load_replay)
     done = False
     step_type, reward, discount, o = env.reset()
-    state = np.hstack((o['target_position'], 
-                       o['j2s7/joints_pos'].reshape(1,14), 
-                       o['j2s7/joints_vel']))
-
+    state = format_observation(o)
 
     frame_compressed = get_next_frame(env)
     for t in range(start_t, int(args.max_timesteps)):
         # Select action randomly or according to policy
         if t < args.start_timesteps:
-            action = random_state.uniform(low=-kwargs['max_action'], high=kwargs['max_action'], size=action_shape)
+            action = random_state.uniform(low=kwargs['min_actions'], high=kwargs['max_actions'], size=kwargs['action_dim'])
         else:
             # Select action randomly or according to policy
             action = (
-                    policy.select_action(state)
-                    + random_state.normal(0, kwargs['max_action'] * args.expl_noise, size=kwargs['action_dim'])
-                ).clip(-kwargs['max_action'], kwargs['max_action'])
+                    policy.select_action(state)*kwargs['max_actions']
+                    + random_state.normal(0, kwargs['max_actions'] * args.expl_noise, size=kwargs['action_dim'])
+                ).clip(kwargs['min_actions'], kwargs['max_actions'])
         # Perform action
         step_type, reward, discount, o = env.step(action)
-        next_state = np.hstack((o['target_position'], 
-                           o['j2s7/joints_pos'].reshape(1,14), 
-                           o['j2s7/joints_vel']))
+
+        next_state = format_observation(o)
         next_frame_compressed = get_next_frame(env)
         done = step_type.last()
         # Store data in replay buffer
@@ -234,10 +232,10 @@ def train():
             print("Total T: {} Episode Num: {} Reward: {}".format(t, replay_buffer.episode_count-1, replay_buffer.episode_rewards[-1]))
             print("---------------------------------------")
             # Reset environment
+
             step_type, reward, discount, o = env.reset()
-            state = np.hstack((o['target_position'], 
-                               o['j2s7/joints_pos'].reshape(1,14), 
-                               o['j2s7/joints_vel']))
+
+            next_state = format_observation(o)
 
             frame_compressed = get_next_frame(env)
 
@@ -264,8 +262,8 @@ def load_policy(load_from):
     if args.policy == "TD3":
         import TD3
         # Target policy smoothing is scaled wrt the action scale
-        kwargs["policy_noise"] = args.policy_noise * kwargs['max_action']
-        kwargs["noise_clip"] = args.noise_clip * kwargs['max_action']
+        kwargs["policy_noise"] = args.policy_noise * kwargs['max_policy_action']
+        kwargs["noise_clip"] = args.noise_clip * kwargs['max_policy_action']
         kwargs["policy_freq"] = args.policy_freq
         policy = TD3.TD3(**kwargs)
     elif args.policy == "OurDDPG":
@@ -324,15 +322,18 @@ def load_policy(load_from):
     return policy, start_step, results_dir, load_model_path
 
 def get_kwargs(env):
-    state_dim = 3 + 14 + 7  
-    action_dim = 10# env.action_spec().shape[0]
-    # TODO 
-    min_action = float(env.action_spec().minimum[0])
-    max_action = float(env.action_spec().maximum[0])
+
+    step_type, reward, discount, o = env.reset()  
+    state_dim = format_observation(o).shape[1]
+    action_dim = env.action_spec().shape[0]
+    min_actions = float(env.action_spec().minimum[0])
+    max_actions = float(env.action_spec().maximum[0])
     kwargs = {
         "state_dim": state_dim,
         "action_dim": action_dim,
-        "max_action": max_action,
+        "min_actions":min_actions, 
+        "max_actions":max_actions, 
+        "max_policy_action": 1.0, # model puts out -1, 1 , agent scales appropriately
         "discount": args.discount,
         "tau": args.tau,
         "device":args.device,
@@ -345,9 +346,12 @@ if __name__ == "__main__":
     parser.add_argument("--savedir", default="results", help='overall dir to store checkpoints')               
     parser.add_argument("--exp_name", default="test", help="name of experiment directory")               
     parser.add_argument("--policy", default="TD3", help='Policy name (TD3, DDPG or OurDDPG)')
-    parser.add_argument("--domain", default="jaco", help='DeepMind Control Suite domain name')
-    parser.add_argument("--task", default="relative_position_reacher_7DOF", help='Deepmind Control Suite task name')
-    #parser.add_argument("--task", default="configurable_reacher", help='Deepmind Control Suite task name')
+    parser.add_argument("--env_name", default="reach_site_features", help='Deepmind Control Suite task name')
+    parser.add_argument("--use_states", 
+                  default=['target_position', 
+                 'jaco 7dof arm/joints_pos', 
+                 'jaco 7dof arm/joints_vel'], type=list)
+ 
     parser.add_argument("--expl_noise", default=0.1, help='std of Gaussian exploration noise')
     parser.add_argument("--batch_size", default=256, type=int, help='batch size for training agent')
     parser.add_argument("--discount", default=0.99, help='discount factor')
@@ -363,8 +367,6 @@ if __name__ == "__main__":
     parser.add_argument("--noise_clip", default=0.5, help="Range to clip target policy noise")
     parser.add_argument("--policy_freq", default=2, type=int, help='freq of delayed policy updates')
 
-    # JACO Specific: 
-    parser.add_argument('-fn', '--fence_name', default='jodesk', help='virtual fence name that prevents jaco from leaving this region. Hard code fences below.')  
     # real robot config
     parser.add_argument("--use_robot", default=False, action='store_true', help="start real robot experiment - requires ros_interface to be running")
 
@@ -401,24 +403,12 @@ if __name__ == "__main__":
 
     num_steps = 0
     print("---------------------------------------")
-    print("Policy: {} Domain: {}, Task: {}, Seed: {}".format(args.policy, args.domain, args.task, args.seed))
+    print("Policy: {} Env: {}, Seed: {}".format(args.policy, args.env_name, args.seed))
     print("---------------------------------------")
     # info for particular task
     task_kwargs = {}
-    #task_kwargs = {'target_type':'fixed'}
-    if args.domain == 'jaco':
-        if args.fence_name == 'jodesk':
-            # .1f is too low - joint 4 hit sometimes!!!!
-            task_kwargs['fence'] = {'x':(-.48,.48), 'y':(-1.0, .4), 'z':(.13, 1.2)}
-        else:
-            task_kwargs['fence'] = {'x':(-5,5), 'y':(-5, 5), 'z':(.15, 1.2)}
-        if args.use_robot:
-            task_kwargs['physics_type'] = 'robot'
-            args.eval_filename_modifier += 'robot'
-        else:
-            task_kwargs['physics_type'] = 'mujoco'
-
-    _env = manipulation.load('reach_site_features')
+    obs_placeholder = np.zeros((1,50))
+    _env = manipulation.load(args.env_name)
     kwargs = get_kwargs(_env)
     del _env
 

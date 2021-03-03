@@ -185,6 +185,7 @@ def train():
     env = suite.load(domain_name=args.domain, task_name=args.task, task_kwargs=task_kwargs,  environment_kwargs=environment_kwargs)
     #TODO - use action dim instead? 
     action_shape = env.action_spec().shape
+    embed()
     replay_buffer = load_replay_buffer(load_replay_path=args.load_replay, load_model_path=args.load_model, kwargs=kwargs, seed=args.seed)
     info = utils.create_new_info_dict(args, loaded_modelpath, args.load_replay)
     done = False

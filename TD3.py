@@ -10,20 +10,20 @@ from IPython import embed
 
 
 class Actor(nn.Module):
-    def __init__(self, state_dim, action_dim, max_action):
+    def __init__(self, state_dim, action_dim, max_policy_action):
         super(Actor, self).__init__()
 
         self.l1 = nn.Linear(state_dim, 256)
         self.l2 = nn.Linear(256, 256)
         self.l3 = nn.Linear(256, action_dim)
 
-        self.max_action = max_action
+        self.max_policy_action = max_policy_action
 
 
     def forward(self, state):
         a = F.relu(self.l1(state))
         a = F.relu(self.l2(a))
-        return self.max_action * torch.tanh(self.l3(a))
+        return self.max_policy_action * torch.tanh(self.l3(a))
 
 
 class Critic(nn.Module):
@@ -68,31 +68,33 @@ class TD3(object):
         self,
         state_dim,
         action_dim,
-        max_action,
+        max_policy_action=1.0,
         discount=0.99,
         tau=0.005,
         policy_noise=0.2,
         noise_clip=0.5,
         policy_freq=2,
-        device='cpu'
+        device='cpu',
+        **kwargs
     ):
 
         self.step = 0
         self.device = device
-        self.actor = Actor(state_dim, action_dim, max_action).to(self.device)
+        self.max_policy_action = max_policy_action
+        self.discount = discount
+        self.tau = tau
+        self.policy_noise = policy_noise
+        self.noise_clip = noise_clip
+        self.policy_freq = policy_freq
+
+
+        self.actor = Actor(state_dim, action_dim, self.max_policy_action).to(self.device)
         self.actor_target = copy.deepcopy(self.actor)
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=3e-4)
 
         self.critic = Critic(state_dim, action_dim).to(self.device)
         self.critic_target = copy.deepcopy(self.critic)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=3e-4)
-
-        self.discount = discount
-        self.tau = tau
-        self.policy_noise = policy_noise
-        self.noise_clip = noise_clip
-        self.policy_freq = policy_freq
-        self.max_action = max_action
 
         self.total_it = 0
         self.loss_dict = {'actor':[], 'critic':[], 'critic_step':[], 'actor_step':[]}
@@ -123,7 +125,7 @@ class TD3(object):
             # TODO - maybe clamp bt known min/max actions
             next_action = (
                 self.actor_target(next_state) + noise
-            ).clamp(-self.max_action, self.max_action)
+            ).clamp(-self.max_policy_action, self.max_policy_action)
 
             # Compute the target Q value
             target_Q1, target_Q2 = self.critic_target(next_state, next_action)

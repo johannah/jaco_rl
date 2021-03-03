@@ -26,12 +26,15 @@ def plot_rec_losses(load_path, losses):
 def plot_rec_results(results_fpath, phase, random_indexes=False, seed=10, num_plot_examples=256, plot_neighbors=0):
     
     data = np.load(results_fpath)
+    
+    ex = data['ex']
+    rec_ex = data['rec_ex']
     ymin = min([data['st'].min(), data['rec_st'].min()])-.1
     ymax = max([data['st'].max(), data['rec_st'].max()])+.1
-    exmin = min([data['ex'][:,0].min(), data['rec_ex'][:,0].min()])-.1
-    exmax = max([data['ex'][:,0].max(), data['rec_ex'][:,0].max()])+.1
-    eymin = min([data['ex'][:,1].min(), data['rec_ex'][:,1].min()])-.1
-    eymax = max([data['ex'][:,1].max(), data['rec_ex'][:,1].max()])+.1
+    exmin = min([ex[:,0].min(), rec_ex[:,0].min()])-.1
+    exmax = max([ex[:,0].max(), rec_ex[:,0].max()])+.1
+    eymin = min([ex[:,1].min(), rec_ex[:,1].min()])-.1
+    eymax = max([ex[:,1].max(), rec_ex[:,1].max()])+.1
  
     if plot_neighbors: 
         blues = plt.cm.Blues(np.linspace(0.2,.8,plot_neighbors))[::-1]
@@ -70,14 +73,14 @@ def plot_rec_results(results_fpath, phase, random_indexes=False, seed=10, num_pl
             print('skipping %s'%pltname)
         else:
             f,ax = plt.subplots(1,2,figsize=(8,5))
-            ex = data['ex'][i]
-            rec_ex = data['rec_ex'][i]
+            ex_i = ex[i]
+            rec_ex_i = rec_ex[i]
  
             ax[0].plot(data['st'][i], label='data', lw=2, marker='x', color='mediumorchid')
             ax[0].plot(data['rec_st'][i], label='rec', lw=1.5, marker='o', color='blue')
 
-            ax[1].scatter(ex[0], ex[1], s=min([abs(ex[2]),.01])*sscale, marker='o', color='mediumorchid')
-            ax[1].scatter(rec_ex[0], rec_ex[1], s=min([.01,abs(rec_ex[2])])*sscale, marker='o', color='blue')
+            ax[1].scatter(ex_i[0], ex_i[1], s=min([abs(ex_i[2]),.01])*sscale, marker='o', color='mediumorchid')
+            ax[1].scatter(rec_ex_i[0], rec_ex_i[1], s=min([.01,abs(rec_ex_i[2])])*sscale, marker='o', color='blue')
             ax[0].set_ylim(ymin, ymax)                    
             ax[1].set_ylim(eymin, eymax)                    
             ax[1].set_xlim(exmin, exmax)                    
@@ -91,7 +94,7 @@ def plot_rec_results(results_fpath, phase, random_indexes=False, seed=10, num_pl
  
 
             #f.suptitle('TP:[{:.2f},{:.2f},{:.2f}]\nETP:[{:.2f},{:.2f},{:.2f}]\ndiff:[{:.2f},{:.2f},{:.2f}],dis {:.2f}'.format(ex[0],ex[1],ex[2],rec_ex[0],rec_ex[1],rec_ex[2],d[0],d[1],d[2],diff[i]))
-            f.suptitle('{} TP:[{:.2f},{:.2f},{:.2f}]\nETP:[{:.2f},{:.2f},{:.2f}]\ndis {:.2f}'.format(i,ex[0],ex[1],ex[2],rec_ex[0],rec_ex[1],rec_ex[2],diff[i]))
+            f.suptitle('{} TP:[{:.2f},{:.2f},{:.2f}]\nETP:[{:.2f},{:.2f},{:.2f}]\ndis {:.2f}'.format(i,ex_i[0],ex_i[1],ex_i[2],rec_ex_i[0],rec_ex_i[1],rec_ex_i[2],diff[i]))
  
             #plt.legend()
             ax[0].legend()

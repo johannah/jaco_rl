@@ -90,22 +90,42 @@ def loopit(rec_angle, states, T2):
     return ext_pred
  
 def forward_pass(states, extremes, Ts):
-    rec_angle = np.pi*(torch.tanh(model(states[:,:3], extremes))+1)
-    T2 = Ts[:,2]
+    bs = states.shape[0]
+    masks = torch.rand((bs,6)).to(states.device)
+    masks[masks<args.mask_prob] = 0
+    masks[masks>=args.mask_prob] = 1
 
-    _T3 = batch_torch_dh_transform(3, rec_angle[:,0])
-    T3_pred = torch.matmul(T2,_T3)
+    rec_angle = np.pi*(torch.tanh(model(masks*states[:,:6], extremes))+1)
+    Tall = torch.zeros((states.shape[0],4,4)).to(args.device)
+    Tall = Tall + torch.FloatTensor(([[1,0,0,0],[0,-1,0,0],[0,0,-1,0],[0,0,0,1]])).to(args.device)
+    
+    use_angle = torch.zeros_like(states) 
+    use_angle[:,:6][masks == 0] = use_angle[:,:6][masks == 0] + rec_angle[masks == 0]
+    use_angle[:,:6][masks == 1] = use_angle[:,:6][masks == 1] + states[:,:6][masks == 1]
+    use_angle[:,6] = states[:,6]
 
-    _T4 = batch_torch_dh_transform(4, rec_angle[:,1])
+    _T0 = batch_torch_dh_transform(0, use_angle[:,0])
+    T0_pred = torch.matmul(Tall,_T0)
+ 
+    _T1 = batch_torch_dh_transform(1, use_angle[:,1])
+    T1_pred = torch.matmul(T0_pred,_T1)
+ 
+    _T2 = batch_torch_dh_transform(2, use_angle[:,2])
+    T2_pred = torch.matmul(T1_pred,_T2)
+
+    _T3 = batch_torch_dh_transform(3, use_angle[:,3])
+    T3_pred = torch.matmul(T2_pred,_T3)
+
+    _T4 = batch_torch_dh_transform(4, use_angle[:,4])
     T4_pred = torch.matmul(T3_pred,_T4)
 
-    _T5 = batch_torch_dh_transform(5, rec_angle[:,2])
+    _T5 = batch_torch_dh_transform(5, use_angle[:,5])
     T5_pred = torch.matmul(T4_pred,_T5)
 
-    _T6 = batch_torch_dh_transform(6, states[:,6])
+    _T6 = batch_torch_dh_transform(6, use_angle[:,6])
     T6_pred = torch.matmul(T5_pred,_T6)
     ext_pred = T6_pred[:,:3,3]
-    return ext_pred, rec_angle
+    return ext_pred, use_angle
 
 
 def run(train_cnt):
@@ -160,11 +180,10 @@ def create_results_file(phase, out_path):
             states = torch.FloatTensor(data_buffer[phase]['states'][batch_indexes]).to(device)
             extremes = torch.FloatTensor(data_buffer[phase]['extremes'][batch_indexes,6]).to(device)
             Ts = torch.FloatTensor(data_buffer[phase]['Ts'][batch_indexes]).to(device)
-            ext_pred, rec_angle = forward_pass(states, extremes, Ts)
+            ext_pred, use_angle = forward_pass(states, extremes, Ts)
             extremes = data_buffer[phase]['extremes'][batch_indexes,6]
             states = states.detach().cpu().numpy()
-            rec_st = deepcopy(states)
-            rec_st[:,3:6] = rec_angle.detach().cpu().numpy()
+            rec_st = use_angle.detach().cpu().numpy()
             rec_ex = ext_pred.detach().cpu().numpy()
 
             all_st.extend(states)
@@ -194,12 +213,13 @@ if __name__ == '__main__':
     parser.add_argument('--load_model', default='')
     parser.add_argument('--device', default='cpu')
     parser.add_argument('--savedir', default='models')
-    parser.add_argument('--exp_name', default='test')
+    parser.add_argument('--exp_name', default='DHmask')
     parser.add_argument('--eval', default=False, action='store_true')
     parser.add_argument('--plot_random', default=False, action='store_true')
     parser.add_argument('--num_plot_examples', default=256)
-    parser.add_argument('--save_every_epochs', default=10)
+    parser.add_argument('--save_every_epochs', default=5)
     parser.add_argument('--rec_weight', type=float, default=4000)
+    parser.add_argument('--mask_prob', type=float, default=0.9)
     batch_size = 256
     random_state = np.random.RandomState(0)
     today = date.today()
@@ -212,8 +232,7 @@ if __name__ == '__main__':
 
     if args.load_model == '':
         cnt = 0
-        exp_desc = 'aepos45normlr1e4_batchBig' 
-        exp_desc = exp_desc+"DH"
+        exp_desc = args.exp_name+"%smp"%args.mask_prob
       
         savebase = os.path.join(args.savedir, today_str+exp_desc+args.exp_name+'_%02d'%cnt)
         while len(glob(os.path.join(savebase, '*.pt'))):
@@ -246,7 +265,7 @@ if __name__ == '__main__':
  
     train_size,state_size = data_buffer['train']['states'].shape
     valid_size = data_buffer['valid']['states'].shape[0]
-    model = BigAngleAutoEncoder(input_size=3, output_size=3).to(device)
+    model = BigAngleAutoEncoder(input_size=6, output_size=6).to(device)
     print("setting up with training size {}".format(train_size))
     train_cnt = 0
     if args.load_model != '':
